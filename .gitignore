@@ -1,0 +1,10 @@
+# build output
+*.exe
+*.obj
+*.pdb
+*.lib
+*.ilk
+
+# per-user settings and scratch
+*.cfg
+shots/
