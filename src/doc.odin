@@ -48,6 +48,7 @@ layer_destroy :: proc(l: ^Layer) {
 		cel_release(c)
 	}
 	delete(l.cels)
+	delete(l.filters)
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,7 @@ state_clone :: proc(s: ^State) -> State {
 			c.refs += 1
 			append(&nl.cels, c)
 		}
+		nl.filters = slice.clone_to_dynamic(l.filters[:])
 		append(&r.layers, nl)
 	}
 	r.frames = slice.clone_to_dynamic(s.frames[:])
@@ -266,7 +268,7 @@ composite :: proc(d: ^Doc, frame: int, out: []Color) {
 		if !l.visible || l.opacity == 0 {
 			continue
 		}
-		src := l.cels[frame].pix
+		src := layer_pixels(d, &l, frame)
 		if l.blend == .Normal && l.opacity == 255 {
 			for i in 0 ..< len(out) {
 				s := src[i]
@@ -289,6 +291,12 @@ composite :: proc(d: ^Doc, frame: int, out: []Color) {
 }
 
 doc_refresh_comp :: proc(d: ^Doc) {
+	if doc_uses_palette_filter(d) {
+		if h := palette_hash(d.palette[:]); h != d.pal_hash {
+			d.pal_hash = h
+			d.comp_dirty = true
+		}
+	}
 	if d.comp_dirty {
 		if len(d.comp) != d.w * d.h {
 			delete(d.comp)
@@ -333,6 +341,7 @@ doc_dup_layer :: proc(d: ^Doc) {
 		c.refs += 1
 		append(&nl.cels, c)
 	}
+	nl.filters = slice.clone_to_dynamic(src.filters[:])
 	nm := fmt.tprintf("%s copy", name_str(&src.name))
 	name_set(&nl.name, nm)
 	inject_at(&d.layers, d.active_layer + 1, nl)
@@ -363,7 +372,7 @@ doc_merge_down :: proc(d: ^Doc) -> bool {
 	mode := d.layers[i].blend
 	for f in 0 ..< len(d.frames) {
 		dst := cel_write(d, i - 1, f)
-		src := d.layers[i].cels[f].pix
+		src := layer_pixels(d, &d.layers[i], f)
 		for p in 0 ..< len(dst) {
 			dst[p] = blend_px(dst[p], src[p], op, mode)
 		}

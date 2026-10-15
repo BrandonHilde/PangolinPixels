@@ -17,6 +17,9 @@ headless test-suite (undo/redo, tools, file formats).
   invert, crop to selection.
 - **Colour**: HSV picker, RGB sliders, hex entry, alpha, per-sprite palettes with presets (DB32, PICO-8, Sweetie 16,
   Endesga 32, Game Boy, ...), palette from sprite, GIMP `.gpl` import/export.
+- **Layer filters**: non-destructive, reorderable filter stack per layer ("Add Filter" under the palette): brightness, contrast, hue,
+  saturation, invert, grayscale, sepia, posterize, threshold, and a **Palette Filter** that remaps every colour to the nearest
+  colour of the current palette (perceptual distance), with adjustable strength. Saved in `.pxl`, applied to export.
 - **Sprite ops**: canvas size (with anchor), scale, rotate, flip, trim, outline, hue/saturation/brightness (live
   preview), invert, grayscale, replace colour.
 - **Files**: native `.pxl` project, PNG / JPG / BMP / TGA / GIF / QOI import,

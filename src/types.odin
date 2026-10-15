@@ -71,6 +71,7 @@ Layer :: struct {
 	opacity: u8,
 	blend:   Blend,
 	cels:    [dynamic]^Cel_Data, // one per frame
+	filters: [dynamic]Layer_Filter, // applied in order when compositing
 }
 
 Frame :: struct {
@@ -119,6 +120,7 @@ Doc :: struct {
 	modified:                    bool,
 	palette:                     [dynamic]Color,
 	pal_sel:                     int,
+	pal_hash:                    u64, // palette contents the composite was last built with
 
 	// view
 	zoom:                        f32,

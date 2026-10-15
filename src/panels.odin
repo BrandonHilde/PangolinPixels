@@ -618,7 +618,7 @@ panel_right :: proc(r: Rect) {
 	cell: i32 = 14
 	cols := max(area.w / cell, 1)
 	// leave room for the preview below
-	prev_h: i32 = show_preview ? 120 : 0
+	prev_h: i32 = (show_preview ? 120 : 0) + FILTER_PANEL_H
 	pal_rows := i32((len(doc.palette) + int(cols) - 1) / int(cols))
 	pal_h := min(max(r.y + r.h - y - prev_h - 10, cell), max(pal_rows * cell + 2, cell))
 	pal := Rect{x, y, area.w, pal_h}
@@ -658,6 +658,11 @@ panel_right :: proc(r: Rect) {
 	clip_end()
 	outline_rect(pal, C_BORDER)
 	y += pal_h + 6
+
+	// --- filters ----------------------------------------------------------
+	hline(r.x + 1, y - 3, r.w - 1, C_BORDER)
+	panel_filters(Rect{x, y, area.w, FILTER_PANEL_H - 6})
+	y += FILTER_PANEL_H
 
 	// --- preview ---------------------------------------------------------
 	if show_preview {
@@ -987,4 +992,142 @@ panel_status :: proc(r: Rect, vp: Rect) {
 	// right: size, frame, zoom
 	info := fmt.tprintf("%dx%d   Frame %d/%d   %d%%", doc.w, doc.h, doc.active_frame + 1, len(doc.frames), int(doc.zoom * 100))
 	text(r.x + r.w - text_w(info) - 8, ty, info, C_TEXT_DIM)
+}
+
+// ---------------------------------------------------------------------------
+// Layer filters
+// ---------------------------------------------------------------------------
+
+FILTER_PANEL_H :: 118
+FILTER_ADD_ID :: u32(0xF117E125)
+
+filter_scroll: i32
+filter_drag_changed: bool
+filter_drag_pushed: bool
+
+// Header with an "Add Filter" button, then the active layer's filter stack.
+// Edits go through history_push so they undo like any other change.
+panel_filters :: proc(r: Rect) {
+	d := doc
+	layer := &d.layers[d.active_layer]
+
+	text(r.x, r.y + 3, "Filters", C_TEXT_DIM)
+	add_r := Rect{r.x + r.w - 70, r.y, 70, 14}
+	if button(add_r, "Add Filter", "Add a filter to the current layer") {
+		popup_begin(FILTER_ADD_ID, add_r, 100)
+		for k in Filter_Kind {
+			popup_item(FILTER_INFO[k].name, int(k))
+		}
+	}
+	if ui.popup_result_id == FILTER_ADD_ID {
+		history_push(d)
+		append(&layer.filters, filter_make(Filter_Kind(ui.popup_result_val)))
+		doc_touch(d)
+		ui.popup_result_id = 0
+		filter_scroll = max(i32(len(layer.filters)) * 32, 0) // jump to the new entry
+	}
+
+	list := Rect{r.x, r.y + 17, r.w, r.h - 17}
+	fill_rect(list, C_PANEL_DK)
+	if len(layer.filters) == 0 {
+		text_clipped(list, "  No filters on this layer", C_TEXT_DIM)
+		outline_rect(list, C_BORDER)
+		return
+	}
+
+	// row heights: name line, plus a slider line for filters with a parameter
+	row_h :: proc(f: Layer_Filter) -> i32 {
+		return FILTER_INFO[f.kind].has_param ? 32 : 17
+	}
+	total: i32
+	for f in layer.filters {
+		total += row_h(f)
+	}
+	hover_slider := false
+	max_scroll := max(total - list.h, 0)
+	filter_scroll = clamp(filter_scroll, 0, max_scroll)
+
+	// deferred actions so the list is not modified while iterating
+	act_del, act_up, act_down, act_toggle := -1, -1, -1, -1
+
+	clip_begin(list)
+	cy := list.y - filter_scroll
+	n := len(layer.filters)
+	for &f, i in layer.filters {
+		h := row_h(f)
+		if cy + h < list.y || cy > list.y + list.h {
+			cy += h
+			continue
+		}
+		info := FILTER_INFO[f.kind]
+		row := Rect{list.x, cy, list.w, h - 1}
+		if ui_hover(row) && ui_hover(list) {
+			fill_rect(row, C_PANEL)
+		}
+		eye := Rect{row.x + 1, cy + 1, 15, 14}
+		if icon_button(eye, .Eye, f.enabled ? "Disable filter" : "Enable filter", f.enabled) && ui_hover(list) {
+			act_toggle = i
+		}
+		bx := row.x + row.w - 15
+		if icon_button(Rect{bx, cy + 1, 14, 14}, .Close, "Remove filter") && ui_hover(list) {
+			act_del = i
+		}
+		bx -= 15
+		if icon_button(Rect{bx, cy + 1, 14, 14}, .Down, "Move filter down (applied later)", false, i < n - 1) && ui_hover(list) {
+			act_down = i
+		}
+		bx -= 15
+		if icon_button(Rect{bx, cy + 1, 14, 14}, .Up, "Move filter up (applied earlier)", false, i > 0) && ui_hover(list) {
+			act_up = i
+		}
+		text_clipped(Rect{eye.x + eye.w + 4, cy + 1, bx - eye.x - eye.w - 6, 14}, info.name, f.enabled ? C_TEXT : C_TEXT_DIM)
+		if info.has_param {
+			sr := Rect{row.x + 2, cy + 17, row.w - 4, 13}
+			if ui_hover(sr) {
+				hover_slider = true
+				// one undo step per drag / wheel notch
+				if (ui.pressed[0] || ui.wheel != 0) && !filter_drag_pushed {
+					history_push(d)
+					filter_drag_pushed = true
+					filter_drag_changed = false
+				}
+			}
+			if slider(sr, &f.amount, info.lo, info.hi, info.param) {
+				filter_drag_changed = true
+				doc_touch(d)
+			}
+		}
+		cy += h
+	}
+	clip_end()
+	outline_rect(list, C_BORDER)
+
+	if filter_drag_pushed && !ui.down[0] && ui.wheel == 0 {
+		if !filter_drag_changed {
+			history_discard(d)
+		}
+		filter_drag_pushed = false
+	}
+
+	if ui_hover(list) && !hover_slider && ui.wheel != 0 {
+		filter_scroll = clamp(filter_scroll - i32(ui.wheel) * 17, 0, max_scroll)
+	}
+
+	if act_toggle >= 0 {
+		history_push(d)
+		layer.filters[act_toggle].enabled = !layer.filters[act_toggle].enabled
+		doc_touch(d)
+	} else if act_del >= 0 {
+		history_push(d)
+		ordered_remove(&layer.filters, act_del)
+		doc_touch(d)
+	} else if act_up >= 0 {
+		history_push(d)
+		layer.filters[act_up], layer.filters[act_up - 1] = layer.filters[act_up - 1], layer.filters[act_up]
+		doc_touch(d)
+	} else if act_down >= 0 {
+		history_push(d)
+		layer.filters[act_down], layer.filters[act_down + 1] = layer.filters[act_down + 1], layer.filters[act_down]
+		doc_touch(d)
+	}
 }

@@ -224,7 +224,7 @@ rcol :: proc(r: ^Reader) -> Color {
 // ---------------------------------------------------------------------------
 
 PXL_MAGIC :: "PXLA"
-PXL_VERSION :: 1
+PXL_VERSION :: 2 // 1: no layer filters (still readable)
 
 rle_encode :: proc(w: ^Writer, pix: []Color) {
 	tmp := Writer{}
@@ -289,6 +289,12 @@ project_encode :: proc(d: ^Doc) -> []u8 {
 		for c in l.cels {
 			rle_encode(&w, c.pix)
 		}
+		w8(&w, u8(min(len(l.filters), 255)))
+		for f in l.filters[:min(len(l.filters), 255)] {
+			w8(&w, u8(f.kind))
+			w8(&w, f.enabled ? 1 : 0)
+			w16(&w, u16(i16(f.amount)))
+		}
 	}
 	w32(&w, u32(len(d.tags)))
 	for &t in d.tags {
@@ -311,7 +317,7 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 	}
 	r := Reader{d = data, pos = 4}
 	ver := r8(&r)
-	if ver != PXL_VERSION {
+	if ver < 1 || ver > PXL_VERSION {
 		return nil, false
 	}
 	w := int(r32(&r))
@@ -353,6 +359,18 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 			c := cel_new(w * h)
 			rle_decode(&r, c.pix)
 			append(&l.cels, c)
+		}
+		if ver >= 2 {
+			nfilt := int(r8(&r))
+			for _ in 0 ..< nfilt {
+				f: Layer_Filter
+				f.kind = Filter_Kind(min(r8(&r), u8(len(Filter_Kind) - 1)))
+				f.enabled = r8(&r) != 0
+				f.amount = int(i16(r16(&r)))
+				info := FILTER_INFO[f.kind]
+				f.amount = clamp(f.amount, info.lo, info.hi)
+				append(&l.filters, f)
+			}
 		}
 		append(&nd.layers, l)
 	}

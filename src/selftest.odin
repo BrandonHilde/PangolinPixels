@@ -81,6 +81,46 @@ selftest :: proc() -> int {
 	doc_merge_down(d)
 	check(len(d.layers) == 2, "merge down")
 
+	// --- layer filters ---
+	{
+		fd := doc_new(4, 4, "f")
+		append(&docs, fd)
+		doc = fd
+		clear(&fd.palette)
+		append(&fd.palette, Color{0, 0, 0, 255}, Color{255, 255, 255, 255}, Color{200, 30, 30, 255})
+		fd.layers[0].cels[0].pix[0] = Color{250, 250, 250, 255}
+		fd.layers[0].cels[0].pix[1] = Color{180, 40, 20, 255}
+		fd.layers[0].cels[0].pix[2] = Color{10, 5, 20, 128}
+		history_push(fd)
+		append(&fd.layers[0].filters, filter_make(.Palette))
+		doc_touch(fd)
+		doc_refresh_comp(fd)
+		check(color_eq(fd.comp[0], Color{255, 255, 255, 255}), "palette filter: near-white -> white")
+		check(color_eq(fd.comp[1], Color{200, 30, 30, 255}), "palette filter: reddish -> palette red")
+		check(fd.comp[2].a == 128 && fd.comp[2].r == 0, "palette filter keeps alpha")
+		check(fd.comp[3].a == 0, "palette filter skips transparent")
+		check(fd.layers[0].cels[0].pix[0].r == 250, "filter is non-destructive")
+		// palette edits re-trigger the composite
+		fd.palette[1] = Color{255, 255, 0, 255}
+		doc_refresh_comp(fd)
+		check(color_eq(fd.comp[0], Color{255, 255, 0, 255}), "palette change refreshes palette filter")
+		append(&fd.layers[0].filters, filter_make(.Invert))
+		fd.layers[0].filters[0], fd.layers[0].filters[1] = fd.layers[0].filters[1], fd.layers[0].filters[0]
+		doc_touch(fd)
+		doc_refresh_comp(fd)
+		check(color_eq(fd.comp[0], Color{0, 0, 0, 255}), "filter order matters (invert, then palette)")
+		fdata := project_encode(fd)
+		fd2, fok := project_decode(fdata)
+		check(fok, "filter doc decodes")
+		check(fok && len(fd2.layers[0].filters) == 2 && fd2.layers[0].filters[0].kind == .Invert && fd2.layers[0].filters[1].kind == .Palette, "filters round-trip")
+		if fok do doc_destroy(fd2)
+		history_undo(fd)
+		check(len(fd.layers[0].filters) == 0, "undo removes filters")
+		pop(&docs)
+		doc_destroy(fd)
+		doc = d
+	}
+
 	// --- project round trip ---
 	name_set(&d.layers[0].name, "base")
 	data := project_encode(d)
