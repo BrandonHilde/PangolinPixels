@@ -17,15 +17,15 @@ Filter :: struct {
 }
 
 FILTERS_OPEN := [?]Filter {
-	{"All supported", "*.pxl;*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif;*.qoi;*.gpl"},
+	{"All supported", "*.pxl;*.png;*.jpg;*.jpeg;*.jfif;*.bmp;*.tga;*.gif;*.qoi;*.gpl"},
 	{"Pixel project (*.pxl)", "*.pxl"},
-	{"Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif;*.qoi"},
+	{"Images", "*.png;*.jpg;*.jpeg;*.jfif;*.bmp;*.tga;*.gif;*.qoi"},
 	{"All files", "*.*"},
 }
 FILTERS_PXL := [?]Filter{{"Pixel project (*.pxl)", "*.pxl"}}
 FILTERS_PNG := [?]Filter{{"PNG image (*.png)", "*.png"}}
 FILTERS_GIF := [?]Filter{{"GIF animation (*.gif)", "*.gif"}}
-FILTERS_IMG := [?]Filter{{"Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif;*.qoi"}, {"All files", "*.*"}}
+FILTERS_IMG := [?]Filter{{"Images", "*.png;*.jpg;*.jpeg;*.jfif;*.bmp;*.tga;*.gif;*.qoi"}, {"All files", "*.*"}}
 FILTERS_GPL := [?]Filter{{"GIMP palette (*.gpl)", "*.gpl"}, {"All files", "*.*"}}
 
 native_dialog :: proc(save: bool, title: string, filters: []Filter, def_ext, initial: string) -> (path: string, ok: bool) {
@@ -406,8 +406,33 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 // ---------------------------------------------------------------------------
 
 load_image_pixels :: proc(path: string) -> (pix: []Color, w, h: int, ok: bool) {
-	cpath := strings.clone_to_cstring(path, context.temp_allocator)
-	img := rl.LoadImage(cpath)
+	// core:os handles UTF-8 paths on every platform (raylib's fopen does not on Windows)
+	data, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil {
+		return
+	}
+	defer delete(data)
+	return decode_image(data, lower_ext(path))
+}
+
+// Decodes image file bytes. JPEGs use our own decoder (raylib is built without JPG);
+// everything else goes through raylib, picked by content rather than file extension.
+decode_image :: proc(data: []u8, ext: string) -> (pix: []Color, w, h: int, ok: bool) {
+	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return jpeg_decode(data)
+	}
+	kind := ext
+	switch {
+	case len(data) >= 4 && data[0] == 0x89 && string(data[1:4]) == "PNG":
+		kind = ".png"
+	case len(data) >= 4 && string(data[:4]) == "GIF8":
+		kind = ".gif"
+	case len(data) >= 4 && string(data[:4]) == "qoif":
+		kind = ".qoi"
+	case len(data) >= 2 && string(data[:2]) == "BM":
+		kind = ".bmp"
+	}
+	img := rl.LoadImageFromMemory(strings.clone_to_cstring(kind, context.temp_allocator), raw_data(data), i32(len(data)))
 	if img.data == nil || img.width <= 0 || img.height <= 0 {
 		return
 	}
@@ -415,8 +440,7 @@ load_image_pixels :: proc(path: string) -> (pix: []Color, w, h: int, ok: bool) {
 	rl.ImageFormat(&img, .UNCOMPRESSED_R8G8B8A8)
 	w, h = int(img.width), int(img.height)
 	pix = make([]Color, w * h)
-	src := ([^]Color)(img.data)[:w * h]
-	copy(pix, src)
+	copy(pix, ([^]Color)(img.data)[:w * h])
 	ok = true
 	return
 }

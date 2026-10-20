@@ -370,13 +370,21 @@ doc_merge_down :: proc(d: ^Doc) -> bool {
 	history_push(d)
 	op := f32(d.layers[i].opacity) / 255
 	mode := d.layers[i].blend
+	// Filters are baked in on both sides: the lower layer's own filters must not be
+	// re-applied to the content merged into it, so they are applied and then removed.
+	bake_below := layer_has_filters(&d.layers[i - 1])
 	for f in 0 ..< len(d.frames) {
+		if bake_below {
+			baked := layer_pixels(d, &d.layers[i - 1], f)
+			copy(cel_write(d, i - 1, f), baked)
+		}
 		dst := cel_write(d, i - 1, f)
 		src := layer_pixels(d, &d.layers[i], f)
 		for p in 0 ..< len(dst) {
 			dst[p] = blend_px(dst[p], src[p], op, mode)
 		}
 	}
+	clear(&d.layers[i - 1].filters)
 	layer_destroy(&d.layers[i])
 	ordered_remove(&d.layers, i)
 	d.active_layer = i - 1

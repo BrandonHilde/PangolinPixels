@@ -3,6 +3,7 @@ package pangolin
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
+import "core:slice"
 import rl "vendor:raylib"
 
 @(private = "file")
@@ -116,9 +117,61 @@ selftest :: proc() -> int {
 		if fok do doc_destroy(fd2)
 		history_undo(fd)
 		check(len(fd.layers[0].filters) == 0, "undo removes filters")
+
+		// merge down bakes both layers' filters and looks the same afterwards
+		append(&fd.layers[0].filters, filter_make(.Invert))
+		doc_add_layer(fd)
+		fd.layers[1].cels[0].pix[3] = Color{200, 100, 50, 255}
+		append(&fd.layers[1].filters, filter_make(.Grayscale))
+		doc_touch(fd)
+		doc_refresh_comp(fd)
+		before := slice.clone(fd.comp, context.temp_allocator)
+		check(doc_merge_down(fd), "merge filtered layers")
+		check(len(fd.layers) == 1 && len(fd.layers[0].filters) == 0, "merge bakes filters")
+		doc_refresh_comp(fd)
+		check(slice.equal(before, fd.comp), "merge with filters keeps appearance")
+		check(color_eq(fd.comp[0], Color{5, 5, 5, 255}), "merge: lower filter applied once")
+		history_undo(fd)
+		check(len(fd.layers) == 2 && len(fd.layers[0].filters) == 1 && fd.layers[0].cels[0].pix[0].r == 250, "undo merge restores filters")
 		pop(&docs)
 		doc_destroy(fd)
 		doc = d
+	}
+
+	// --- image -> pixel art ---
+	{
+		// 8x8 source: left half red, right half blue, bottom-right quarter transparent
+		src := make([]Color, 64, context.temp_allocator)
+		for y in 0 ..< 8 {
+			for x in 0 ..< 8 {
+				c := x < 4 ? Color{250, 10, 10, 255} : Color{10, 10, 240, 255}
+				if x >= 4 && y >= 4 do c = {}
+				src[y * 8 + x] = c
+			}
+		}
+		sc := make([]Color, 4, context.temp_allocator)
+		pixelate_scale(src, 8, 8, sc, 2, 2)
+		check(color_eq(sc[0], Color{250, 10, 10, 255}) && color_eq(sc[1], Color{10, 10, 240, 255}), "pixelate: box downscale")
+		check(sc[3].a == 0, "pixelate: transparent area stays transparent")
+		pal := make([dynamic]Color, context.temp_allocator)
+		median_cut(sc, 2, &pal)
+		check(len(pal) == 2, "median cut: requested colour count")
+		out := make([]Color, 4, context.temp_allocator)
+		gb := palette_preset(.Gameboy)
+		for di in Dither {
+			quantize(sc, out, 2, 2, gb, di)
+			in_pal := true
+			for c, i in out {
+				if i == 3 {
+					in_pal &= c.a == 0
+					continue
+				}
+				found := false
+				for pc in gb do found |= color_eq(pc, c)
+				in_pal &= found
+			}
+			check(in_pal, fmt.tprintf("quantize (%v): output uses only palette colours", di))
+		}
 	}
 
 	// --- project round trip ---
@@ -345,6 +398,54 @@ selftest :: proc() -> int {
 	}
 	check(same, "png round trip")
 	os.remove("selftest_tmp.png")
+	{
+		// Our JPEG decoder (raylib has none): progressive, 4:2:0 chroma, restart markers and
+		// EXIF orientation 6. 8x4 quadrants in, 4x8 out, compared to libjpeg's decode.
+		JPG := [?]u8 {
+			255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 255, 225, 0, 34, 69, 120, 105,
+			102, 0, 0, 77, 77, 0, 42, 0, 0, 0, 8, 0, 1, 1, 18, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0, 255, 219, 0,
+			67, 0, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 2, 2, 2, 2, 2, 4, 3, 2, 2, 2, 2, 5, 4, 4, 3, 4, 6, 5, 6, 6, 6, 5, 6,
+			6, 6, 7, 9, 8, 6, 7, 9, 7, 6, 6, 8, 11, 8, 9, 10, 10, 10, 10, 10, 6, 8, 11, 12, 11, 10, 12, 9, 10, 10, 10,
+			255, 219, 0, 67, 1, 2, 2, 2, 2, 2, 2, 5, 3, 3, 5, 10, 7, 6, 7, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+			10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+			10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 255, 194, 0, 17, 8, 0, 4, 0, 8, 3, 1, 34, 0, 2, 17, 1, 3,
+			17, 1, 255, 196, 0, 21, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 255, 196, 0, 21, 1, 1, 1,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 7, 255, 221, 0, 4, 0, 1, 255, 218, 0, 12, 3, 1, 0, 2, 16, 3,
+			16, 0, 0, 1, 162, 36, 232, 255, 196, 0, 23, 16, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 5, 7,
+			255, 218, 0, 8, 1, 1, 0, 1, 5, 2, 197, 167, 39, 120, 255, 196, 0, 29, 17, 0, 2, 3, 0, 2, 3, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 1, 2, 3, 4, 17, 0, 5, 33, 49, 97, 255, 218, 0, 8, 1, 3, 1, 1, 63, 1, 171, 78, 159, 111, 0,
+			183, 122, 53, 150, 86, 246, 238, 3, 49, 207, 3, 89, 180, 156, 0, 1, 240, 103, 63, 255, 196, 0, 33, 17, 0,
+			1, 2, 4, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 7, 17, 33, 0, 5, 19, 34, 35, 49, 113, 255, 218, 0,
+			8, 1, 2, 1, 1, 63, 1, 156, 4, 229, 211, 22, 54, 30, 19, 141, 180, 233, 209, 41, 218, 145, 86, 91, 38, 128,
+			91, 187, 251, 143, 255, 196, 0, 30, 16, 0, 0, 4, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 17, 18, 19, 0,
+			3, 5, 21, 34, 81, 113, 255, 218, 0, 8, 1, 1, 0, 6, 63, 2, 169, 93, 100, 186, 211, 40, 200, 64, 141, 122,
+			228, 127, 255, 196, 0, 24, 16, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 1, 17, 193, 255, 218,
+			0, 8, 1, 1, 0, 1, 63, 33, 208, 194, 75, 197, 161, 255, 218, 0, 12, 3, 1, 0, 2, 0, 3, 0, 0, 0, 16, 3, 255,
+			196, 0, 23, 17, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 17, 33, 0, 255, 218, 0, 8, 1, 3, 1, 1,
+			63, 16, 185, 181, 219, 115, 33, 169, 5, 128, 48, 14, 255, 196, 0, 24, 17, 1, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 1, 0, 17, 33, 129, 255, 218, 0, 8, 1, 2, 1, 1, 63, 16, 95, 185, 36, 1, 139, 74, 163, 82,
+			186, 179, 255, 196, 0, 25, 16, 1, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 0, 1, 33, 65, 240, 255,
+			218, 0, 8, 1, 1, 0, 1, 63, 16, 234, 30, 116, 173, 168, 96, 110, 127, 255, 217,
+		}
+		REF := [?]u8 {
+			39, 63, 223, 77, 48, 167, 192, 53, 92, 231, 39, 38, 36, 60, 222, 82, 51, 171, 189, 50, 89, 234, 40, 40, 40,
+			62, 226, 79, 47, 170, 192, 49, 92, 234, 38, 39, 54, 66, 148, 78, 61, 113, 153, 79, 70, 174, 68, 29, 226,
+			224, 139, 214, 231, 139, 104, 163, 57, 95, 175, 62, 240, 227, 60, 211, 243, 80, 66, 191, 37, 34, 204, 54,
+			244, 228, 70, 210, 239, 85, 70, 189, 45, 35, 200, 61, 243, 224, 68, 215, 241, 90, 68, 185, 44, 39, 201, 64,
+		}
+		check(write_file("selftest_tmp.jpg", JPG[:]), "jpg save")
+		jb, jbw, jbh, jok := load_image_pixels("selftest_tmp.jpg")
+		check(jok && jbw == 4 && jbh == 8, "jpg load + EXIF rotation")
+		worst := 0
+		if jok {
+			for p, i in jb {
+				for ch in 0 ..< 3 do worst = max(worst, abs(int(p[ch]) - int(REF[i * 3 + ch])))
+			}
+			delete(jb)
+		}
+		check(jok && worst <= 3, fmt.tprintf("jpg matches libjpeg (max diff %d)", worst))
+		os.remove("selftest_tmp.jpg")
+	}
 
 	// many colours -> median cut; compare decoded frame loosely
 	gd := doc_new(32, 32, "gif")

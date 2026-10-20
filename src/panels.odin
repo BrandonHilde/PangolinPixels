@@ -70,6 +70,7 @@ menu_build :: proc(idx: int) {
 		item("Import Image...", cmd = .Import_Image)
 		item("Import as Layer...", cmd = .Import_Layer)
 		item("Import Sprite Sheet...", cmd = .Import_Sheet)
+		item("Convert Image to Pixel Art...", cmd = .Pixel_Art_Convert)
 		popup_sep()
 		item("Export...", cmd = .Export)
 		popup_sep()
@@ -97,6 +98,8 @@ menu_build :: proc(idx: int) {
 		item("Grayscale", cmd = .Grayscale)
 		item("Outline...", cmd = .Outline)
 		item("Replace Color...", cmd = .Replace_Color)
+		popup_sep()
+		item("Convert to Pixel Art...", cmd = .Pixel_Art_Sprite)
 	case 2:
 		item("Canvas Size...", cmd = .Canvas_Size)
 		item("Scale Sprite...", cmd = .Scale_Sprite)
@@ -737,6 +740,9 @@ panel_timeline :: proc(r: Rect) {
 	}
 	if icon_button(b(&x, by), .Down, "Move layer down", false, d.active_layer > 0) {
 		run_cmd(.Layer_Down)
+	}
+	if icon_button(b(&x, by), .Merge, "Merge down, applying filters (Ctrl+E)", false, d.active_layer > 0) {
+		run_cmd(.Layer_Merge)
 	}
 	x += 8
 	if badge_button(b(&x, by), .Frame, true, "New frame (Alt+N)") {

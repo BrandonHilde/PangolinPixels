@@ -16,6 +16,7 @@ Dialog_Kind :: enum {
 	Adjust,
 	Export,
 	Import_Sheet,
+	Pixelate,
 	Confirm,
 	Message,
 	Shortcuts,
@@ -56,7 +57,7 @@ dialog_open :: proc(k: Dialog_Kind) {
 		msg_text  = dialog.msg_text,
 	}
 	switch k {
-	case .None, .Message, .Shortcuts, .About, .Confirm:
+	case .None, .Message, .Shortcuts, .About, .Confirm, .Pixelate:
 	case .New_Sprite:
 		dialog.a, dialog.b = 64, 64
 	case .Canvas_Size:
@@ -108,6 +109,9 @@ dialog_open :: proc(k: Dialog_Kind) {
 }
 
 dialog_release :: proc() {
+	if dialog.kind == .Pixelate {
+		pixelate_free()
+	}
 	if dialog.orig != nil {
 		delete(dialog.orig)
 		dialog.orig = nil
@@ -187,6 +191,8 @@ dialogs_run :: proc() {
 		dlg_export()
 	case .Import_Sheet:
 		dlg_import_sheet()
+	case .Pixelate:
+		dlg_pixelate()
 	case .Confirm:
 		dlg_confirm()
 	case .Message:

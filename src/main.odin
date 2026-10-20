@@ -65,6 +65,7 @@ demo_setup :: proc() {
 
 main :: proc() {
 	shot_path := ""
+	convert_path := ""
 	demo := false
 	dlg_arg := 0
 	menu_arg := -1
@@ -72,6 +73,9 @@ main :: proc() {
 	for i in 1 ..< len(args) {
 		if args[i] == "--shot" && i + 1 < len(args) {
 			shot_path = args[i + 1]
+		}
+		if args[i] == "--convert" && i + 1 < len(args) {
+			convert_path = args[i + 1]
 		}
 		if args[i] == "--demo" {
 			demo = true
@@ -117,6 +121,9 @@ main :: proc() {
 		demo_setup()
 	}
 
+	if convert_path != "" {
+		pixelate_open_path(convert_path)
+	}
 	if dlg_arg > 0 {
 		dialog_open(Dialog_Kind(dlg_arg))
 	}

@@ -13,6 +13,7 @@ Cmd :: enum {
 	Import_Image,
 	Import_Layer,
 	Import_Sheet,
+	Pixel_Art_Convert,
 	Export,
 	Export_PNG_Quick,
 	Close_Doc,
@@ -40,6 +41,7 @@ Cmd :: enum {
 	Grayscale,
 	Outline,
 	Replace_Color,
+	Pixel_Art_Sprite,
 	// sprite
 	Canvas_Size,
 	Scale_Sprite,
@@ -148,6 +150,7 @@ SHORTCUTS := [?]Shortcut {
 	{.Deselect, .ESCAPE, false, false, false},
 	{.Invert_Sel, .I, true, false, false},
 	{.Layer_New, .N, false, true, false},
+	{.Layer_Merge, .E, true, false, false},
 	{.Frame_New, .N, false, false, true},
 	{.Play, .ENTER, false, false, false},
 	{.Frame_Prev, .COMMA, false, false, false},
@@ -380,6 +383,10 @@ run_cmd :: proc(cmd: Cmd) {
 		file_import_dialog(.Layer)
 	case .Import_Sheet:
 		file_import_dialog(.Sheet)
+	case .Pixel_Art_Convert:
+		pixelate_open_dialog()
+	case .Pixel_Art_Sprite:
+		pixelate_from_doc(doc)
 	case .Export:
 		dialog_open(.Export)
 	case .Export_PNG_Quick:
