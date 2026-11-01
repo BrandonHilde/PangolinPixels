@@ -2,7 +2,6 @@ package pangolin
 
 import "core:math"
 import "core:slice"
-import rl "vendor:raylib"
 
 canvas_vp: Rect
 
@@ -41,11 +40,15 @@ eff_tool :: proc() -> Tool {
 	if drag.active {
 		return drag.tool
 	}
-	if rl.IsKeyDown(.SPACE) && ui.focus_id == 0 && dialog.kind == .None {
+	if IsKeyDown(.SPACE) && ui.focus_id == 0 && dialog.kind == .None {
 		return .Hand
 	}
 	if ui.alt && draw_tool(cur_tool) && cur_tool != .Eraser {
 		return .Picker
+	}
+	// the pen's eraser end erases with any drawing tool
+	if pen_eraser_active() && draw_tool(cur_tool) {
+		return .Eraser
 	}
 	return cur_tool
 }
@@ -85,6 +88,54 @@ snap_line :: proc(start, cur: IVec) -> IVec {
 	return IVec{start.x + (dx < 0 ? -m : m), start.y + (dy < 0 ? -m : m)}
 }
 
+// Snap to grid: on while the custom grid is shown and Snap is ticked.
+snap_on :: proc() -> bool {
+	return opts.snap && opts.grid && opts.grid_w > 0 && opts.grid_h > 0
+}
+
+// Nearest grid line to `v` on an axis with cells `cell` wide starting at `off`.
+@(private = "file")
+grid_line :: proc(v, cell, off: int) -> int {
+	return int(math.round(f32(v - off) / f32(cell))) * cell + off
+}
+
+// A drag from pixel `s` to pixel `c` widened or narrowed to whole grid cells, keeping its direction.
+snap_cells :: proc(s, c: IVec) -> (IVec, IVec) {
+	if !snap_on() do return s, c
+	axis :: proc(s, c, cell, off: int) -> (int, int) {
+		lo, hi := min(s, c), max(s, c)
+		a := grid_line(lo, cell, off)
+		b := grid_line(hi + 1, cell, off) - 1
+		if b < a do b = a + cell - 1
+		return s <= c ? a : b, s <= c ? b : a
+	}
+	sx, cx := axis(s.x, c.x, opts.grid_w, opts.grid_ox)
+	sy, cy := axis(s.y, c.y, opts.grid_h, opts.grid_oy)
+	return {sx, sy}, {cx, cy}
+}
+
+// A pixel moved onto the nearest grid crossing (line end points).
+snap_point :: proc(p: IVec) -> IVec {
+	if !snap_on() do return p
+	return {grid_line(p.x, opts.grid_w, opts.grid_ox), grid_line(p.y, opts.grid_h, opts.grid_oy)}
+}
+
+// How far a move drag has gone, in whole grid cells while snapping.
+drag_delta :: proc(p: IVec) -> IVec {
+	d := p - drag.start
+	if snap_on() {
+		d.x = int(math.round(f32(d.x) / f32(opts.grid_w))) * opts.grid_w
+		d.y = int(math.round(f32(d.y) / f32(opts.grid_h))) * opts.grid_h
+	}
+	return d
+}
+
+// The corners a shape or marquee drag uses, snapped when snapping is on.
+drag_corners :: proc(t: Tool, start, cur: IVec) -> (IVec, IVec) {
+	if t == .Line do return snap_point(start), snap_point(cur)
+	return snap_cells(start, cur)
+}
+
 shape_corners :: proc(t: Tool, start, cur: IVec) -> (a, b: IVec) {
 	a, b = start, cur
 	if t == .Line {
@@ -108,6 +159,7 @@ draw_shape :: proc(t: Tool, start, cur: IVec) {
 	a, b := shape_corners(t, start, cur)
 	edge_plot := opts.brush_size > 1 ? brush_stamp : stroke_plot
 	switch t {
+	case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 	case .Line:
 		line_points(a.x, a.y, b.x, b.y, edge_plot)
 	case .Rect:
@@ -150,6 +202,7 @@ begin_drag :: proc(btn: int, p: IVec) {
 	main_col := btn == 0 ? fg : bg
 	alt_col := btn == 0 ? bg : fg
 	switch t {
+	case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 	case .Pencil, .Eraser, .Spray:
 		erase := t == .Eraser
 		if erase {
@@ -173,7 +226,8 @@ begin_drag :: proc(btn: int, p: IVec) {
 			drag.active = false
 			return
 		}
-		draw_shape(t, p, p)
+		s, c := drag_corners(t, p, p)
+		draw_shape(t, s, c)
 	case .Curve:
 		curve_begin_drag(btn, p, main_col, alt_col)
 	case .Bucket:
@@ -232,6 +286,7 @@ begin_drag :: proc(btn: int, p: IVec) {
 update_drag :: proc(p: IVec) {
 	drag.cur = p
 	switch drag.tool {
+	case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 	case .Pencil, .Eraser:
 		if p != drag.last {
 			stroke_segment(drag.last.x, drag.last.y, p.x, p.y, false)
@@ -243,7 +298,8 @@ update_drag :: proc(p: IVec) {
 		drag.last = p
 	case .Line, .Rect, .Ellipse:
 		stroke_reset()
-		draw_shape(drag.tool, drag.start, p)
+		s, c := drag_corners(drag.tool, drag.start, p)
+		draw_shape(drag.tool, s, c)
 	case .Curve:
 		curve_update_drag(p)
 	case .Picker:
@@ -252,7 +308,8 @@ update_drag :: proc(p: IVec) {
 		w, h := doc.w, doc.h
 		shape: []u8
 		if drag.sel_moving {
-			dx, dy := p.x - drag.start.x, p.y - drag.start.y
+			mv := drag_delta(p)
+			dx, dy := mv.x, mv.y
 			nm := make([]u8, w * h)
 			for y in 0 ..< h {
 				for x in 0 ..< w {
@@ -268,10 +325,13 @@ update_drag :: proc(p: IVec) {
 			return
 		}
 		switch drag.tool {
+		case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 		case .Select_Rect:
-			shape = mask_rect(w, h, drag.start.x, drag.start.y, p.x, p.y)
+			a, b := drag_corners(.Select_Rect, drag.start, p)
+			shape = mask_rect(w, h, a.x, a.y, b.x, b.y)
 		case .Select_Ellipse:
-			shape = mask_ellipse(w, h, drag.start.x, drag.start.y, p.x, p.y)
+			a, b := drag_corners(.Select_Ellipse, drag.start, p)
+			shape = mask_ellipse(w, h, a.x, a.y, b.x, b.y)
 		case .Lasso:
 			if p != drag.last {
 				append(&drag.lasso, p)
@@ -284,7 +344,8 @@ update_drag :: proc(p: IVec) {
 		delete(shape)
 		doc_sel_set(doc, nm)
 	case .Move:
-		dx, dy := p.x - drag.start.x, p.y - drag.start.y
+		mv := drag_delta(p)
+		dx, dy := mv.x, mv.y
 		pix := cel_write(doc, doc.active_layer, doc.active_frame)
 		nsel := apply_move(pix, drag.mv_orig, drag.mv_sel, doc.w, doc.h, dx, dy, drag.mv_copy)
 		if nsel != nil {
@@ -297,6 +358,7 @@ update_drag :: proc(p: IVec) {
 
 end_drag :: proc() {
 	switch drag.tool {
+	case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 	case .Curve:
 		curve.grab = -1
 		curve.phase = 1
@@ -314,7 +376,7 @@ end_drag :: proc() {
 			drag.sel_base = nil
 		}
 	case .Move:
-		if drag.cur == drag.start {
+		if drag_delta(drag.cur) == {} {
 			history_discard(doc)
 		}
 		delete(drag.mv_orig)
@@ -370,6 +432,7 @@ canvas_update :: proc(vp: Rect) {
 
 	if over && !drag.active {
 		switch t {
+		case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 		case .Hand:
 			ui.cursor = .RESIZE_ALL
 		case .Zoom:

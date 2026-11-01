@@ -1,10 +1,13 @@
 package pangolin
 
+import "core:bytes"
 import "core:fmt"
+import "core:image"
+import "core:image/qoi"
 import "core:math/rand"
 import "core:os"
 import "core:slice"
-import rl "vendor:raylib"
+import "core:strings"
 
 @(private = "file")
 fails: int
@@ -399,7 +402,7 @@ selftest :: proc() -> int {
 	check(same, "png round trip")
 	os.remove("selftest_tmp.png")
 	{
-		// Our JPEG decoder (raylib has none): progressive, 4:2:0 chroma, restart markers and
+		// Our JPEG decoder: progressive, 4:2:0 chroma, restart markers and
 		// EXIF orientation 6. 8x4 quadrants in, 4x8 out, compared to libjpeg's decode.
 		JPG := [?]u8 {
 			255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 255, 225, 0, 34, 69, 120, 105,
@@ -457,7 +460,7 @@ selftest :: proc() -> int {
 	cpath := "selftest_tmp.gif"
 	check(write_file(cpath, gif), "gif write")
 	gp, gw, gh, gok := load_image_pixels(cpath)
-	check(gok && gw == 32 && gh == 32, "gif decodes with raylib (LZW valid)")
+	check(gok && gw == 32 && gh == 32, "gif decodes with stb_image (LZW valid)")
 	if gok {
 		// average error should be modest for 255 colours out of random data
 		tot := 0
@@ -491,6 +494,218 @@ selftest :: proc() -> int {
 	}
 	os.remove(cpath)
 
+	// QOI (stb_image has no QOI decoder; core:image/qoi reads it)
+	{
+		src := [4]Color{{255, 0, 0, 255}, {0, 255, 0, 128}, {0, 0, 255, 0}, {10, 20, 30, 255}}
+		img := image.Image{width = 2, height = 2, channels = 4, depth = 8}
+		bytes.buffer_write(&img.pixels, slice.to_bytes(src[:]))
+		out: bytes.Buffer
+		err := qoi.save_to_buffer(&out, &img)
+		qp, qw, qh, qok := decode_image(bytes.buffer_to_bytes(&out), ".qoi")
+		check(err == nil && qok && qw == 2 && qh == 2 && slice.equal(qp, src[:]), "qoi decodes")
+		delete(qp)
+		bytes.buffer_destroy(&out)
+		bytes.buffer_destroy(&img.pixels)
+	}
+
+	selftest_tool_groups()
+
 	fmt.printf("== %d failures ==\n", fails)
 	return fails
+}
+
+// Tool groups: hotkeys cycle a group's tools, colour groups cycle the foreground colour,
+// hotkeys can be reassigned, and the set-up survives the preferences file.
+@(private = "file")
+selftest_tool_groups :: proc() {
+	press :: proc(k: KeyboardKey) {
+		gfx.key_pressed = {}
+		gfx.key_pressed[key_scancode(k)] = true
+	}
+	ui.ctrl, ui.shift, ui.alt = false, false, false
+	tool_groups_default()
+	check(len(tool_groups) == 4 && tool_groups[0].key == .ONE, "default tool groups")
+	select_tool_in_group(.Lasso)
+	tool_group_activate(0)
+	check(cur_tool == .Pencil, "group hotkey picks its first tool")
+	tool_group_activate(0)
+	check(cur_tool == .Eraser, "pressing it again cycles to the next tool")
+	tool_group_activate(1)
+	check(cur_tool == .Line && current_group() == 1, "another group's hotkey switches group")
+	tool_group_activate(0)
+	check(cur_tool == .Eraser, "returning to a group picks the tool last used from it")
+	run_cmd(.Tool_Zoom)
+	check(cur_tool == .Zoom && current_group() == 3, "a tool shortcut selects the group holding the tool")
+
+	press(.TWO)
+	check(tool_groups_hotkeys() && cur_tool == .Line, "group hotkeys run from the keyboard")
+	ui.ctrl = true
+	press(.THREE)
+	check(!tool_groups_hotkeys() && cur_tool == .Line, "Ctrl+digit is left to the zoom shortcuts")
+	ui.ctrl = false
+
+	// reassigning a hotkey takes it away from the group that had it
+	group_key_wait = 3
+	press(.TWO)
+	check(tool_groups_key_capture() && tool_groups[3].key == .TWO && tool_groups[1].key == .KEY_NULL && group_key_wait == -1, "assign a group hotkey")
+	group_key_wait = 3
+	press(.BACKSPACE)
+	tool_groups_key_capture()
+	check(tool_groups[3].key == .KEY_NULL, "Backspace clears a group hotkey")
+	gfx.key_pressed = {}
+
+	// colour group
+	cg := Tool_Group{key = .Q}
+	append(&cg.colors, Color{255, 0, 0, 255}, Color{0, 255, 0, 255}, Color{0, 0, 255, 255})
+	name_set(&cg.name, "Skin")
+	append(&tool_groups, cg)
+	ci := len(tool_groups) - 1
+	tool_select_before := cur_tool
+	set_fg(Color{1, 2, 3, 255})
+	tool_group_activate(ci)
+	check(fg == Color{255, 0, 0, 255} && cur_tool == tool_select_before, "colour group hotkey sets the foreground, not the tool")
+	tool_group_activate(ci)
+	check(fg == Color{0, 255, 0, 255}, "colour group hotkey cycles its colours")
+	picker_set_fg(Color{9, 99, 199, 255})
+	check(tool_groups[ci].colors[1] == Color{9, 99, 199, 255}, "the colour picker edits the linked group colour")
+	set_fg(Color{0, 0, 0, 255})
+	check(color_linked() == nil, "picking a colour elsewhere unlinks the group colour")
+
+	// preferences round trip
+	name_set(&tool_groups[0].name, group_clean_name("My: Tools;"))
+	saved := tool_groups_serialize()
+	tool_groups_default()
+	tool_groups_parse(saved)
+	check(len(tool_groups) == 5 && name_str(&tool_groups[0].name) == "My Tools" && tool_groups[0].key == .ONE, "groups survive the preferences file")
+	check(len(tool_groups[1].tools) == 4 && tool_groups[1].key == .KEY_NULL && tool_groups[3].tools[2] == .Zoom, "group tools and hotkeys are restored")
+	check(len(tool_groups[4].colors) == 3 && tool_groups[4].key == .Q && tool_groups[4].colors[1] == Color{9, 99, 199, 255}, "colour groups are restored")
+
+	// switches: off -> on with its settings shown; picking a tool brings the tool's settings back;
+	// clicking while on but not shown shows them; clicking while shown turns it off
+	tool_groups_default()
+	opts.grid, opts.onion = false, false
+	tool_toggle(.Grid)
+	check(opts.grid && options_switch_on && options_switch == .Grid, "clicking Grid turns it on and shows its settings")
+	select_tool_in_group(.Pencil)
+	check(opts.grid && !options_switch_on && cur_tool == .Pencil, "picking a tool brings its settings back")
+	tool_toggle(.Grid)
+	check(opts.grid && options_switch_on, "clicking Grid while it is on shows its settings")
+	tool_toggle(.Grid)
+	check(!opts.grid && !options_switch_on, "clicking Grid again turns it off")
+	select_tool_in_group(.Onion)
+	check(opts.onion && cur_tool == .Pencil, "a switch never becomes the active tool")
+	switch_set(.Onion, false)
+	opts.sym_x, opts.sym_y = false, true
+	switch_set(.Symmetry, false)
+	check(!opts.sym_x && !opts.sym_y, "Symmetry off clears both mirrors")
+	switch_set(.Symmetry, true)
+	check(!opts.sym_x && opts.sym_y, "Symmetry comes back as it was")
+	switch_set(.Symmetry, false)
+	opts.tile = .Y
+	switch_set(.Tiling, false)
+	switch_set(.Tiling, true)
+	check(opts.tile == .Y, "Tiled Mode comes back as it was")
+	switch_set(.Tiling, false)
+	sg := Tool_Group{key = .G}
+	append(&sg.tools, Tool.Grid)
+	append(&tool_groups, sg)
+	tool_group_activate(len(tool_groups) - 1)
+	check(opts.grid && cur_tool == .Pencil, "a group of only switches flips its first one")
+	switch_set(.Grid, false)
+	ordered_remove(&tool_groups, len(tool_groups) - 1)
+
+	// pattern groups
+	pg := Tool_Group{key = .P}
+	append(&pg.patterns, Pattern.Checker, Pattern.Dots)
+	append(&tool_groups, pg)
+	pgi := len(tool_groups) - 1
+	opts.pattern = .Solid
+	tool_group_activate(pgi)
+	check(opts.pattern == .Checker && cur_tool == .Pencil, "pattern group hotkey picks its first pattern")
+	tool_group_activate(pgi)
+	check(opts.pattern == .Dots, "pattern group hotkey cycles its patterns")
+	resize(&tool_groups[pgi].patterns, 1)
+	tool_group_activate(pgi)
+	check(opts.pattern == .Checker, "a lone pattern turns on")
+	tool_group_activate(pgi)
+	check(opts.pattern == .Solid, "and off again")
+
+	// own brush settings: group 0 (Draw) keeps its own, the other groups share theirs
+	select_tool_in_group(.Pencil, 0)
+	opts.brush_size, opts.pattern = 3, .Solid
+	group_set_own(0, true)
+	opts.brush_size, opts.pattern = 7, .Dots
+	select_tool_in_group(.Line, 1)
+	check(opts.brush_size == 3 && opts.pattern == .Solid, "leaving a group with its own settings restores the shared ones")
+	opts.brush_size = 2
+	select_tool_in_group(.Eraser, 0)
+	check(opts.brush_size == 7 && opts.pattern == .Dots, "returning to it loads its own settings")
+	select_tool_in_group(.Line, 1)
+	check(opts.brush_size == 2, "the shared settings are kept while away")
+
+	// switches, patterns and own settings survive the preferences file
+	saved = tool_groups_serialize()
+	tool_groups_parse(saved)
+	check(len(tool_groups) == 5 && tool_groups[3].tools[3] == .Grid && tool_groups[3].tools[4] == .Onion, "switches in groups are restored")
+	check(len(tool_groups[4].patterns) == 1 && tool_groups[4].key == .P, "pattern groups are restored")
+	check(tool_groups[0].own && tool_groups[0].brush.size == 7 && tool_groups[0].brush.pattern == .Dots && !tool_groups[1].own, "own brush settings are restored")
+	select_tool_in_group(.Pencil, 0)
+	check(opts.brush_size == 7, "and loaded with the group")
+	tool_group_remove(0)
+	check(opts.brush_size == 2 && active_group == -1, "removing an own-settings group brings the shared ones back")
+
+	// workspaces
+	workspace_builtin(3)
+	check(len(tool_groups) == 4 && tool_groups[0].own && tool_groups[0].brush.pixel_perf && len(tool_groups[2].patterns) == 4, "Shading workspace")
+	check(cur_tool == .Pencil && opts.pixel_perf, "a workspace starts with its first tool and that group's settings")
+	text := strings.clone(workspace_text(), context.temp_allocator)
+	workspace_builtin(0)
+	check(workspace_apply_text(text) && len(tool_groups) == 4 && tool_groups[1].own && tool_groups[1].brush.size == 3 && tool_groups[2].key == .THREE, "workspace text round trip")
+	check(!workspace_apply_text("hello=1\n") && len(tool_groups) == 4, "text without groups is not a workspace")
+	workspace_builtin(0)
+
+	// snap to grid
+	opts.grid, opts.snap, opts.grid_w, opts.grid_h, opts.grid_ox, opts.grid_oy = true, true, 8, 8, 0, 0
+	a, b := snap_cells({3, 3}, {10, 10})
+	check(a == {0, 0} && b == {7, 7}, "a marquee drag snaps to whole grid cells")
+	a, b = snap_cells({10, 12}, {3, 3})
+	check(a == {7, 15} && b == {0, 0}, "snapping keeps the drag's direction")
+	a, b = snap_cells({2, 2}, {2, 2})
+	check(a == {0, 0} && b == {7, 7}, "a click selects the cell under it")
+	check(snap_point({5, 2}) == {8, 0}, "line end points snap to grid crossings")
+	drag.start = {0, 0}
+	check(drag_delta({5, -3}) == {8, 0}, "moves go in whole cells")
+	opts.grid = false
+	a, b = snap_cells({3, 3}, {10, 10})
+	check(a == {3, 3} && b == {10, 10} && drag_delta({5, -3}) == {5, -3}, "no snapping while the grid is hidden")
+	opts.snap = false
+	drag = {}
+
+	// layers dragged to a new place in the timeline
+	{
+		ld := doc_new(4, 4, "layers")
+		saved_doc := doc
+		doc = ld
+		doc_add_layer(ld)
+		doc_add_layer(ld)
+		for &l, i in ld.layers do name_set(&l.name, fmt.tprintf("L%d", i))
+		check(doc_move_layer_to(ld, 0, 2) && name_str(&ld.layers[2].name) == "L0" && name_str(&ld.layers[0].name) == "L1" && ld.active_layer == 2, "move a layer to another place")
+		history_undo(ld)
+		check(name_str(&ld.layers[0].name) == "L0" && name_str(&ld.layers[2].name) == "L2", "moving a layer undoes in one step")
+		doc = saved_doc
+		doc_destroy(ld)
+	}
+
+	// recent colours
+	clear(&recent)
+	recent_push(Color{1, 1, 1, 255})
+	recent_push(Color{2, 2, 2, 255})
+	recent_push(Color{1, 1, 1, 255})
+	check(len(recent) == 2 && recent[0] == Color{1, 1, 1, 255}, "recent colours: newest first, no repeats")
+	for i in 0 ..< 40 do recent_push(Color{u8(i), 9, 9, 255})
+	check(len(recent) == RECENT_MAX, "recent colours are capped")
+	if stroke_begin(false, Color{77, 66, 55, 255}, bg) do stroke_end()
+	check(recent[0] == Color{77, 66, 55, 255}, "painting adds the colour to the recent ones")
+
+	tool_groups_default()
 }

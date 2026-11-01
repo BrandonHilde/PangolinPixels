@@ -1,9 +1,9 @@
 package pangolin
 
 import "core:fmt"
+import "core:os"
 import "core:strconv"
 import "core:strings"
-import rl "vendor:raylib"
 
 Palette_Preset :: enum {
 	DB32,
@@ -185,21 +185,14 @@ palette_load_gpl :: proc(d: ^Doc, path: string) -> bool {
 	return true
 }
 
-// File helpers built on raylib so we do not depend on core:os API churn.
 read_file :: proc(path: string) -> (data: []u8, ok: bool) {
-	cpath := strings.clone_to_cstring(path, context.temp_allocator)
-	size: i32
-	raw := rl.LoadFileData(cpath, &size)
-	if raw == nil || size < 0 {
+	d, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil {
 		return nil, false
 	}
-	data = make([]u8, int(size))
-	copy(data, raw[:size])
-	rl.UnloadFileData(raw)
-	return data, true
+	return d, true
 }
 
 write_file :: proc(path: string, data: []u8) -> bool {
-	cpath := strings.clone_to_cstring(path, context.temp_allocator)
-	return rl.SaveFileData(cpath, raw_data(data), i32(len(data)))
+	return os.write_entire_file_from_bytes(path, data) == nil
 }

@@ -2,14 +2,14 @@ package pangolin
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
-import rl "vendor:raylib"
 
 choose_scale :: proc() -> i32 {
 	if ui_scale_pref > 0 {
 		return i32(ui_scale_pref)
 	}
-	mh := rl.GetMonitorHeight(rl.GetCurrentMonitor())
+	mh := gfx_monitor_height()
 	switch {
 	case mh >= 2000:
 		return 3
@@ -66,52 +66,85 @@ demo_setup :: proc() {
 main :: proc() {
 	shot_path := ""
 	convert_path := ""
+	win_w, win_h := 0, 0
+	shot_frame := 8
 	demo := false
-	dlg_arg := 0
+	dlg_arg := -1
 	menu_arg := -1
+	Script_Click :: struct {
+		frame: int,
+		pos:   Vec2,
+		btn:   int,
+	}
+	clicks := make([dynamic]Script_Click)
+	open_args := make([dynamic]string)
 	args := os.args
-	for i in 1 ..< len(args) {
-		if args[i] == "--shot" && i + 1 < len(args) {
+	for i := 1; i < len(args); i += 1 {
+		a := args[i]
+		switch {
+		case a == "--shot" && i + 1 < len(args):
 			shot_path = args[i + 1]
-		}
-		if args[i] == "--convert" && i + 1 < len(args) {
+			i += 1
+		case a == "--scale" && i + 1 < len(args):
+			ui_scale_pref, _ = strconv.parse_int(args[i + 1])
+			i += 1
+		case a == "--size" && i + 1 < len(args):
+			wh := strings.split(args[i + 1], "x", context.temp_allocator)
+			if len(wh) == 2 {
+				win_w, _ = strconv.parse_int(wh[0])
+				win_h, _ = strconv.parse_int(wh[1])
+			}
+			i += 1
+		case a == "--shot-frame" && i + 1 < len(args):
+			shot_frame, _ = strconv.parse_int(args[i + 1])
+			i += 1
+		case a == "--convert" && i + 1 < len(args):
 			convert_path = args[i + 1]
-		}
-		if args[i] == "--demo" {
+			i += 1
+		case a == "--demo":
 			demo = true
-		}
-		if args[i] == "--dialog" && i + 1 < len(args) {
-			dlg_arg = int(args[i + 1][0] - '0') * 10 + (len(args[i + 1]) > 1 ? int(args[i + 1][1] - '0') : -0)
-			if len(args[i + 1]) == 1 do dlg_arg = int(args[i + 1][0] - '0')
-		}
-		if args[i] == "--menu" && i + 1 < len(args) {
-			menu_arg = int(args[i + 1][0] - '0')
-		}
-		if args[i] == "--selftest" {
-			rl.SetTraceLogLevel(.WARNING)
+		case a == "--dialog" && i + 1 < len(args):
+			dlg_arg, _ = strconv.parse_int(args[i + 1])
+			i += 1
+		case a == "--menu" && i + 1 < len(args):
+			menu_arg, _ = strconv.parse_int(args[i + 1])
+			i += 1
+		case a == "--clicks" && i + 1 < len(args):
+			// "frame:x,y;frame:x,y": left clicks in window pixels (frame:x,y,r for a right click),
+			// for checking the interface with --shot
+			for part in strings.split(args[i + 1], ";", context.temp_allocator) {
+				fp := strings.split(part, ":", context.temp_allocator)
+				if len(fp) != 2 do continue
+				xy := strings.split(fp[1], ",", context.temp_allocator)
+				if len(xy) < 2 do continue
+				f, _ := strconv.parse_int(fp[0])
+				x, _ := strconv.parse_f32(xy[0])
+				y, _ := strconv.parse_f32(xy[1])
+				append(&clicks, Script_Click{f, {x, y}, len(xy) > 2 && xy[2] == "r" ? 1 : 0})
+			}
+			i += 1
+		case a == "--selftest":
 			os.exit(selftest())
+		case:
+			append(&open_args, a)
 		}
 	}
 
-	rl.SetTraceLogLevel(.WARNING)
-	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
-	rl.InitWindow(1280, 800, APP_NAME)
-	defer rl.CloseWindow()
-	rl.SetExitKey(.KEY_NULL)
-	rl.SetWindowMinSize(820, 520)
-	mon := rl.GetCurrentMonitor()
-	mw, mh := rl.GetMonitorWidth(mon), rl.GetMonitorHeight(mon)
-	if mw > 0 && mh > 0 {
-		ww, wh := mw * 85 / 100, mh * 85 / 100
-		rl.SetWindowSize(ww, wh)
-		rl.SetWindowPosition((mw - ww) / 2, max((mh - wh) / 2, 30))
+	if !gfx_init(APP_NAME, shot_path != "", win_w, win_h) {
+		fmt.eprintln("could not start SDL:", gfx_error())
+		os.exit(1)
 	}
+	defer gfx_shutdown()
+	pen_init()
 
-	prefs_load()
-	ui.font = rl.GetFontDefault()
-	ui.icons = icons_build_atlas()
+	tool_groups_default()
+	if shot_path == "" {
+		prefs_load()
+	}
 	render_init()
 	brand_init()
+	oui_init()
+	panels_init()
 
 	d := doc_new(64, 64, "Sprite-1")
 	d.modified = false
@@ -120,50 +153,52 @@ main :: proc() {
 	if demo {
 		demo_setup()
 	}
-
+	for p in open_args {
+		open_path(p)
+	}
 	if convert_path != "" {
 		pixelate_open_path(convert_path)
 	}
 	if dlg_arg > 0 {
-		dialog_open(Dialog_Kind(dlg_arg))
+		dialog_open(Dialog_Kind(clamp(dlg_arg, 0, len(Dialog_Kind) - 1)))
 	}
-	rt: rl.RenderTexture2D
-	rt_w, rt_h: i32
 	frame_no := 0
 	last_title: string
 
 	for !want_quit {
-		if rl.WindowShouldClose() {
+		free_all(context.temp_allocator)
+		gfx_poll()
+		for c in clicks {
+			switch frame_no {
+			case c.frame - 2 ..< c.frame:
+				gfx.mouse = c.pos
+			case c.frame:
+				gfx.mouse = c.pos
+				gfx.m_pressed[c.btn], gfx.m_down[c.btn] = true, true
+			case c.frame + 1:
+				gfx.mouse = c.pos
+				gfx.m_released[c.btn], gfx.m_down[c.btn] = true, false
+			}
+		}
+		if gfx.quit {
+			gfx.quit = false
 			request_quit()
 		}
-		free_all(context.temp_allocator)
 
-		sw, sh := rl.GetScreenWidth(), rl.GetScreenHeight()
+		sw, sh := int(gfx.pw), int(gfx.ph)
 		ui.scale = choose_scale()
 		// never let the logical resolution drop below what the layout needs
-		for ui.scale > 1 && (sw / ui.scale < 900 || sh / ui.scale < 560) {
+		for ui.scale > 1 && (sw / int(ui.scale) < 900 || sh / int(ui.scale) < 560) {
 			ui.scale -= 1
 		}
-		lw, lh := max(sw / ui.scale, 1), max(sh / ui.scale, 1)
-		ui.w, ui.h = int(lw), int(lh)
-		if rt.id == 0 || rt_w != lw || rt_h != lh {
-			if rt.id != 0 {
-				rl.UnloadRenderTexture(rt)
-			}
-			rt = rl.LoadRenderTexture(lw, lh)
-			rl.SetTextureFilter(rt.texture, .POINT)
-			rt_w, rt_h = lw, lh
-		}
+		gfx_set_scale(ui.scale)
+		ui.w, ui.h = max(sw / int(ui.scale), 1), max(sh / int(ui.scale), 1)
 
 		ui_begin_frame()
 		ui.input_layer = (dialog.kind != .None ? 2 : 0) + (popup.open ? 1 : 0)
 
-		if rl.IsFileDropped() {
-			files := rl.LoadDroppedFiles()
-			for i in 0 ..< int(files.count) {
-				open_path(string(files.paths[i]))
-			}
-			rl.UnloadDroppedFiles(files)
+		for p in gfx.dropped {
+			open_path(p)
 		}
 
 		shortcuts_update()
@@ -171,49 +206,37 @@ main :: proc() {
 		if status_t > 0 {
 			status_t -= ui.dt
 		}
-
 		if menu_arg >= 0 && frame_no == 3 {
-			popup_begin(1, Rect{i32(menu_arg) * 48, 0, 40, 15}, 0, menu_arg)
-			menu_build(menu_arg)
+			menu_request = menu_arg
 		}
-		rl.BeginTextureMode(rt)
-		rl.ClearBackground(C_BG)
+		gfx_begin(C_BG)
+		oui_begin_frame()
 		main_ui()
+		oui_end_frame()
+		oui_render()
 		dialogs_run()
 		popup_run()
 		tooltip_draw()
-		rl.EndTextureMode()
-
-		rl.BeginDrawing()
-		rl.ClearBackground(rl.BLACK)
-		rl.DrawTexturePro(
-			rt.texture,
-			{0, 0, f32(lw), -f32(lh)},
-			{0, 0, f32(lw * ui.scale), f32(lh * ui.scale)},
-			{},
-			0,
-			rl.WHITE,
-		)
-		rl.EndDrawing()
+		if shot_path != "" && frame_no == shot_frame {
+			gfx.screenshot = shot_path
+		}
+		gfx_present()
 		ui_end_frame()
 
 		// window title
 		title := fmt.tprintf("%s - %s", doc_display_name(doc), APP_NAME)
 		if title != last_title {
-			rl.SetWindowTitle(strings.clone_to_cstring(title, context.temp_allocator))
+			gfx_set_title(title)
 			delete(last_title)
 			last_title = strings.clone(title)
 		}
 
 		frame_no += 1
-		if shot_path != "" {
-			if frame_no == 6 {
-				rl.TakeScreenshot(strings.clone_to_cstring(shot_path, context.temp_allocator))
-			}
-			if frame_no == 10 {
-				break
-			}
+		if shot_path != "" && frame_no == shot_frame + 4 {
+			break
 		}
 	}
-	prefs_save()
+	if shot_path == "" {
+		prefs_save()
+	}
 }

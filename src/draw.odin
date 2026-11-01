@@ -337,6 +337,9 @@ stroke_begin :: proc(erase: bool, col, col2: Color) -> bool {
 	stroke.hits = make([]u16, len(stroke.pix))
 	stroke.col = col
 	stroke.col2 = col2
+	if !erase {
+		recent_push(col)
+	}
 	stroke.erase = erase
 	stroke.changed = false
 	stroke.active = true

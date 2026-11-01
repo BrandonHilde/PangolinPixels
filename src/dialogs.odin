@@ -3,7 +3,6 @@ package pangolin
 import "core:fmt"
 import "core:slice"
 import "core:strings"
-import rl "vendor:raylib"
 
 Dialog_Kind :: enum {
 	None,
@@ -26,6 +25,8 @@ Dialog_Kind :: enum {
 	Outline,
 	Replace_Color,
 	Canvas_Bg,
+	Group_Rename,
+	Workspaces,
 }
 
 Dialog :: struct {
@@ -57,7 +58,12 @@ dialog_open :: proc(k: Dialog_Kind) {
 		msg_text  = dialog.msg_text,
 	}
 	switch k {
-	case .None, .Message, .Shortcuts, .About, .Confirm, .Pixelate:
+	case .None, .Message, .Shortcuts, .About, .Confirm, .Pixelate, .Group_Rename:
+	case .Workspaces:
+		ws_refresh()
+		for e, i in ws_entries {
+			if e.name == ws_current do dialog.a = i
+		}
 	case .New_Sprite:
 		dialog.a, dialog.b = 64, 64
 	case .Canvas_Size:
@@ -94,6 +100,7 @@ dialog_open :: proc(k: Dialog_Kind) {
 		dialog.a, dialog.b = opts.grid_w, opts.grid_h
 		dialog.c, dialog.d = opts.grid_ox, opts.grid_oy
 		dialog.flag = opts.grid
+		dialog.flag2 = opts.snap
 	case .Prefs:
 		dialog.a = ui_scale_pref
 		dialog.b = bg_mode
@@ -126,17 +133,19 @@ dialog_close :: proc() {
 // Draws the dim background and window frame; returns the content area.
 dialog_frame :: proc(title: string, w, h: i32) -> Rect {
 	ui.layer = 2
-	fill_rect(Rect{0, 0, i32(ui.w), i32(ui.h)}, Color{0, 0, 0, 140})
+	fill_rect(Rect{0, 0, i32(ui.w), i32(ui.h)}, Color{6, 7, 10, 130})
 	x := (i32(ui.w) - w) / 2
 	y := (i32(ui.h) - h) / 2
-	fill_rect(Rect{x + 3, y + 3, w, h}, Color{0, 0, 0, 100})
-	box := Rect{x, y, w, h}
-	fill_rect(box, C_PANEL)
-	outline_rect(box, C_BORDER)
-	fill_rect(Rect{x, y, w, 16}, C_PANEL_DK)
-	hline(x, y + 16, w, C_BORDER)
-	text(x + 8, y + 4, title, C_TEXT)
-	return Rect{x + 10, y + 24, w - 20, h - 34}
+	draw_shadow(f32(x), f32(y + 6), f32(w), f32(h), 7, 22, Color{0, 0, 0, 190})
+	draw_rrect(f32(x), f32(y), f32(w), f32(h), 7, C_PANEL)
+	// title bar: rounded on top only (the lower half is clipped away)
+	clip_begin(Rect{x, y, w, 20})
+	draw_rrect(f32(x), f32(y), f32(w), 40, 7, C_PANEL_DK)
+	clip_end()
+	hline(x, y + 20, w, C_BORDER)
+	draw_rrect_outline(f32(x), f32(y), f32(w), f32(h), 7, C_RING_HI)
+	text(x + 12, y + (20 - FONT_CAP) / 2, title, C_TEXT)
+	return Rect{x + 12, y + 26, w - 24, h - 34}
 }
 
 // OK / Cancel row at the bottom of the content area.
@@ -152,10 +161,10 @@ dialog_buttons :: proc(c: Rect, ok_label := "OK", cancel_label := "Cancel") -> (
 		}
 	}
 	if ui.focus_id == 0 {
-		if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
+		if IsKeyPressed(.ENTER) || IsKeyPressed(.KP_ENTER) {
 			ok = true
 		}
-		if rl.IsKeyPressed(.ESCAPE) && cancel_label != "" {
+		if IsKeyPressed(.ESCAPE) && cancel_label != "" {
 			cancel = true
 		}
 	}
@@ -211,6 +220,10 @@ dialogs_run :: proc() {
 		dlg_replace()
 	case .Canvas_Bg:
 		dlg_canvas_bg()
+	case .Group_Rename:
+		dlg_group_rename()
+	case .Workspaces:
+		dlg_workspaces()
 	}
 }
 
@@ -556,7 +569,7 @@ dlg_confirm :: proc() {
 	if button(Rect{c.x + 76, y, 90, 16}, "Don't Save") {
 		proceed = true
 	}
-	if button(Rect{c.x + 172, y, 70, 16}, "Cancel") || rl.IsKeyPressed(.ESCAPE) {
+	if button(Rect{c.x + 172, y, 70, 16}, "Cancel") || IsKeyPressed(.ESCAPE) {
 		dialog_close()
 		return
 	}
@@ -582,7 +595,7 @@ dlg_message :: proc() {
 }
 
 dlg_shortcuts :: proc() {
-	c := dialog_frame("Keyboard Shortcuts", 620, 330)
+	c := dialog_frame("Keyboard Shortcuts", 620, 350)
 	cols :: 3
 	col_w := c.w / cols
 	per_col := (len(SHORTCUTS) + cols - 1) / cols
@@ -596,8 +609,17 @@ dlg_shortcuts :: proc() {
 		name, _ := strings.replace_all(fmt.tprintf("%v", s.cmd), "_", " ", context.temp_allocator)
 		text(x + 78, y, name, C_TEXT)
 	}
+	// the tool groups' own hotkeys (set in the toolbar)
+	sb := strings.builder_make(context.temp_allocator)
+	for &g in tool_groups {
+		if g.key != .KEY_NULL do fmt.sbprintf(&sb, "%s%s %s", strings.builder_len(sb) > 0 ? "    " : "", key_name(g.key), group_title(&g))
+	}
+	if strings.builder_len(sb) > 0 {
+		text(c.x, c.y + c.h - 30, "Tool groups:", C_TEXT_DIM)
+		text(c.x + 78, c.y + c.h - 30, strings.to_string(sb), C_ACCENT)
+	}
 	ok, _ := dialog_buttons(c, "Close", "")
-	if ok || rl.IsKeyPressed(.ESCAPE) {
+	if ok || IsKeyPressed(.ESCAPE) {
 		dialog_close()
 	}
 }
@@ -614,7 +636,7 @@ dlg_about :: proc() {
 	text(tx, c.y + 20, APP_TAGLINE, C_TEXT_DIM)
 	text(tx, c.y + 38, "Layers, frames, tags, onion skin, selections,", C_TEXT)
 	text(tx, c.y + 50, "symmetry, tiling, palettes, GIF/PNG export.", C_TEXT)
-	text(tx, c.y + 68, "Written in Odin with raylib.", C_TEXT_DIM)
+	text(tx, c.y + 68, "Written in Odin with SDL3 and OdinUI.", C_TEXT_DIM)
 	ok, _ := dialog_buttons(c, "Close", "")
 	if ok {
 		dialog_close()
@@ -622,7 +644,7 @@ dlg_about :: proc() {
 }
 
 dlg_grid :: proc() {
-	c := dialog_frame("Grid Settings", 250, 160)
+	c := dialog_frame("Grid Settings", 250, 176)
 	y := c.y
 	row_int(c, y, "Grid width", &dialog.a, 1, 1024)
 	y += 20
@@ -633,6 +655,7 @@ dlg_grid :: proc() {
 	row_int(c, y, "Offset Y", &dialog.d, 0, 1024)
 	y += 20
 	checkbox(c.x, y, "Show grid", &dialog.flag)
+	checkbox(c.x + 110, y, "Snap to grid", &dialog.flag2, "Selections, shapes and moves snap to the grid while it is shown")
 	ok, cancel := dialog_buttons(c)
 	if cancel {
 		dialog_close()
@@ -640,7 +663,8 @@ dlg_grid :: proc() {
 	if ok {
 		opts.grid_w, opts.grid_h = dialog.a, dialog.b
 		opts.grid_ox, opts.grid_oy = dialog.c, dialog.d
-		opts.grid = dialog.flag
+		opts.snap = dialog.flag2
+		switch_set(.Grid, dialog.flag)
 		dialog_close()
 	}
 }
@@ -810,7 +834,7 @@ dlg_canvas_bg :: proc() {
 	y += 22
 	checkbox(c.x, y, "Show background behind transparent pixels", &opts.show_checks)
 	ok, _ := dialog_buttons(c, "Close", "")
-	if ok || rl.IsKeyPressed(.ESCAPE) {
+	if ok || IsKeyPressed(.ESCAPE) {
 		dialog_close()
 	}
 }

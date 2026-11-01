@@ -2,7 +2,6 @@ package pangolin
 
 import "core:fmt"
 import "core:slice"
-import rl "vendor:raylib"
 
 // Image -> pixel art converter: box-filter the source down to a fixed size, then map
 // every pixel onto a palette (optionally dithered). Lives in the .Pixelate dialog.
@@ -62,8 +61,8 @@ Pixelate :: struct {
 	used_colors:  int,
 	scaled_dirty: bool,
 	out_dirty:    bool,
-	tex_src:      rl.Texture2D,
-	tex_out:      rl.Texture2D,
+	tex_src:      Texture,
+	tex_out:      Texture,
 	tex_w, tex_h: int,
 }
 
@@ -75,12 +74,8 @@ pixelate_free :: proc() {
 	delete(p.scaled)
 	delete(p.out)
 	delete(p.pal)
-	if p.tex_src.id != 0 {
-		rl.UnloadTexture(p.tex_src)
-	}
-	if p.tex_out.id != 0 {
-		rl.UnloadTexture(p.tex_out)
-	}
+	tex_destroy(&p.tex_src)
+	tex_destroy(&p.tex_out)
 	// keep the user's last settings for next time
 	keep := Pixelate {
 		w           = p.w,
@@ -342,33 +337,23 @@ pixelate_update :: proc() {
 		pixelate_palette(p)
 		quantize(p.scaled, p.out, p.w, p.h, p.pal[:], p.dither)
 		p.used_colors = pixelate_count_colors(p.out)
-		if p.tex_out.id == 0 || p.tex_w != p.w || p.tex_h != p.h {
-			if p.tex_out.id != 0 {
-				rl.UnloadTexture(p.tex_out)
-			}
-			p.tex_out = make_tex(p.w, p.h)
+		if !tex_valid(p.tex_out) || p.tex_w != p.w || p.tex_h != p.h {
+			tex_destroy(&p.tex_out)
+			p.tex_out = tex_create(p.w, p.h, .Point)
 			p.tex_w, p.tex_h = p.w, p.h
 		}
-		rl.UpdateTexture(p.tex_out, raw_data(p.out))
+		tex_update(p.tex_out, p.out)
 	}
-	if p.tex_src.id == 0 {
-		img := rl.Image {
-			data    = raw_data(p.src),
-			width   = i32(p.src_w),
-			height  = i32(p.src_h),
-			mipmaps = 1,
-			format  = .UNCOMPRESSED_R8G8B8A8,
-		}
-		p.tex_src = rl.LoadTextureFromImage(img)
-		rl.SetTextureFilter(p.tex_src, .BILINEAR)
+	if !tex_valid(p.tex_src) {
+		p.tex_src = tex_from_pixels(p.src, p.src_w, p.src_h, .Linear)
 	}
 }
 
 // Draws `tex` (tw x th) fitted and centred in `r` over a checkerboard.
-pixelate_draw_fit :: proc(r: Rect, tex: rl.Texture2D, tw, th: int, integer_zoom: bool) {
+pixelate_draw_fit :: proc(r: Rect, tex: Texture, tw, th: int, integer_zoom: bool) {
 	fill_rect(r, C_PANEL_DK)
 	outline_rect(r, C_BORDER)
-	if tex.id == 0 || tw <= 0 || th <= 0 {
+	if !tex_valid(tex) || tw <= 0 || th <= 0 {
 		return
 	}
 	z := min(f32(r.w - 4) / f32(tw), f32(r.h - 4) / f32(th))
@@ -380,7 +365,7 @@ pixelate_draw_fit :: proc(r: Rect, tex: rl.Texture2D, tw, th: int, integer_zoom:
 	dst := Rect{r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, max(w, 1), max(h, 1)}
 	clip_begin(r)
 	draw_checker(dst, 4)
-	rl.DrawTexturePro(tex, {0, 0, f32(tw), f32(th)}, to_rl(dst), {}, 0, rl.WHITE)
+	draw_tex(tex, {0, 0, f32(tw), f32(th)}, {f32(dst.x), f32(dst.y), f32(dst.w), f32(dst.h)})
 	clip_end()
 }
 

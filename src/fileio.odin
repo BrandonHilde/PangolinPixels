@@ -2,11 +2,11 @@ package pangolin
 
 import "base:runtime"
 import "core:fmt"
+import "core:image/qoi"
 import "core:os"
 import "core:slice"
 import "core:strings"
 import win "core:sys/windows"
-import rl "vendor:raylib"
 
 // ---------------------------------------------------------------------------
 // Native file dialogs
@@ -55,7 +55,7 @@ when ODIN_OS == .Windows {
 
 		ofn := win.OPENFILENAMEW {
 			lStructSize  = size_of(win.OPENFILENAMEW),
-			hwndOwner    = win.HWND(rl.GetWindowHandle()),
+			hwndOwner    = win.HWND(gfx_hwnd()),
 			lpstrFilter  = win.wstring(raw_data(fbuf)),
 			lpstrFile    = raw_data(buf),
 			nMaxFile     = u32(len(buf)),
@@ -406,7 +406,6 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 // ---------------------------------------------------------------------------
 
 load_image_pixels :: proc(path: string) -> (pix: []Color, w, h: int, ok: bool) {
-	// core:os handles UTF-8 paths on every platform (raylib's fopen does not on Windows)
 	data, err := os.read_entire_file_from_path(path, context.allocator)
 	if err != nil {
 		return
@@ -415,45 +414,33 @@ load_image_pixels :: proc(path: string) -> (pix: []Color, w, h: int, ok: bool) {
 	return decode_image(data, lower_ext(path))
 }
 
-// Decodes image file bytes. JPEGs use our own decoder (raylib is built without JPG);
-// everything else goes through raylib, picked by content rather than file extension.
+// Decodes image file bytes, picked by content rather than file extension: our own JPEG decoder,
+// core:image for QOI, stb_image for the rest (PNG, GIF, BMP, TGA).
 decode_image :: proc(data: []u8, ext: string) -> (pix: []Color, w, h: int, ok: bool) {
 	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
 		return jpeg_decode(data)
 	}
-	kind := ext
-	switch {
-	case len(data) >= 4 && data[0] == 0x89 && string(data[1:4]) == "PNG":
-		kind = ".png"
-	case len(data) >= 4 && string(data[:4]) == "GIF8":
-		kind = ".gif"
-	case len(data) >= 4 && string(data[:4]) == "qoif":
-		kind = ".qoi"
-	case len(data) >= 2 && string(data[:2]) == "BM":
-		kind = ".bmp"
-	}
-	img := rl.LoadImageFromMemory(strings.clone_to_cstring(kind, context.temp_allocator), raw_data(data), i32(len(data)))
-	if img.data == nil || img.width <= 0 || img.height <= 0 {
+	if len(data) >= 4 && string(data[:4]) == "qoif" {
+		img, err := qoi.load_from_bytes(data, {.alpha_add_if_missing})
+		if err != nil || img == nil {
+			return
+		}
+		defer qoi.destroy(img)
+		w, h = img.width, img.height
+		if img.channels != 4 || len(img.pixels.buf) < w * h * 4 {
+			return
+		}
+		pix = make([]Color, w * h)
+		copy(pix, ([^]Color)(raw_data(img.pixels.buf))[:w * h])
+		ok = true
 		return
 	}
-	defer rl.UnloadImage(img)
-	rl.ImageFormat(&img, .UNCOMPRESSED_R8G8B8A8)
-	w, h = int(img.width), int(img.height)
-	pix = make([]Color, w * h)
-	copy(pix, ([^]Color)(img.data)[:w * h])
-	ok = true
-	return
+	return stb_decode(data)
 }
 
 save_png :: proc(path: string, pix: []Color, w, h: int) -> bool {
-	img := rl.Image {
-		data    = raw_data(pix),
-		width   = i32(w),
-		height  = i32(h),
-		mipmaps = 1,
-		format  = .UNCOMPRESSED_R8G8B8A8,
-	}
-	return rl.ExportImage(img, strings.clone_to_cstring(path, context.temp_allocator))
+	data := encode_png(pix, w, h)
+	return data != nil && write_file(path, data)
 }
 
 doc_from_image :: proc(path: string) -> (d: ^Doc, ok: bool) {

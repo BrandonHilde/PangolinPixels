@@ -1,19 +1,19 @@
 package pangolin
 
 import "core:fmt"
+import "core:os"
 import "core:strconv"
 import "core:strings"
-import rl "vendor:raylib"
 
 // Tiny key=value preferences file stored next to the executable.
 
 prefs_path :: proc() -> string {
-	return fmt.tprintf("%spangolin.cfg", string(rl.GetApplicationDirectory()))
+	return fmt.tprintf("%spangolin.cfg", gfx_app_dir())
 }
 
 // Settings file used before the app was renamed; read once if the new one does not exist.
 prefs_legacy_path :: proc() -> string {
-	return fmt.tprintf("%spixel.cfg", string(rl.GetApplicationDirectory()))
+	return fmt.tprintf("%spixel.cfg", gfx_app_dir())
 }
 
 prefs_save :: proc() {
@@ -31,16 +31,23 @@ prefs_save :: proc() {
 	fmt.sbprintf(&sb, "preview=%d\n", b2i(show_preview))
 	fmt.sbprintf(&sb, "grid_w=%d\n", opts.grid_w)
 	fmt.sbprintf(&sb, "grid_h=%d\n", opts.grid_h)
-	fmt.sbprintf(&sb, "brush_size=%d\n", opts.brush_size)
-	fmt.sbprintf(&sb, "pixel_perfect=%d\n", b2i(opts.pixel_perf))
+	// the shared brush settings, not those of a group that keeps its own
+	groups := tool_groups_serialize()
+	fmt.sbprintf(&sb, "brush_size=%d\n", shared_brush.size)
+	fmt.sbprintf(&sb, "pixel_perfect=%d\n", b2i(shared_brush.pixel_perf))
+	fmt.sbprintf(&sb, "onion_prev=%d\n", opts.onion_prev)
+	fmt.sbprintf(&sb, "onion_next=%d\n", opts.onion_next)
+	fmt.sbprintf(&sb, "onion_alpha=%d\n", opts.onion_alpha)
+	fmt.sbprintf(&sb, "snap=%d\n", b2i(opts.snap))
+	fmt.sbprintf(&sb, "groups=%s\n", groups)
 	write_file(prefs_path(), transmute([]u8)strings.to_string(sb))
 }
 
 prefs_load :: proc() {
 	path := prefs_path()
-	if !rl.FileExists(strings.clone_to_cstring(path, context.temp_allocator)) {
+	if !os.exists(path) {
 		path = prefs_legacy_path()
-		if !rl.FileExists(strings.clone_to_cstring(path, context.temp_allocator)) {
+		if !os.exists(path) {
 			return
 		}
 	}
@@ -56,7 +63,12 @@ prefs_load :: proc() {
 			continue
 		}
 		key := strings.trim_space(line[:eq])
-		val, vok := strconv.parse_int(strings.trim_space(line[eq + 1:]))
+		sval := strings.trim_space(line[eq + 1:])
+		if key == "groups" {
+			tool_groups_parse(sval)
+			continue
+		}
+		val, vok := strconv.parse_int(sval)
 		if !vok {
 			continue
 		}
@@ -85,6 +97,14 @@ prefs_load :: proc() {
 			opts.brush_size = clamp(val, 1, 64)
 		case "pixel_perfect":
 			opts.pixel_perf = val != 0
+		case "onion_prev":
+			opts.onion_prev = clamp(val, 0, 1)
+		case "onion_next":
+			opts.onion_next = clamp(val, 0, 1)
+		case "onion_alpha":
+			opts.onion_alpha = clamp(val, 5, 100)
+		case "snap":
+			opts.snap = val != 0
 		}
 	}
 }

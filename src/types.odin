@@ -1,8 +1,5 @@
 package pangolin
 
-import rl "vendor:raylib"
-
-Color :: rl.Color
 IVec :: [2]int
 Vec2 :: [2]f32
 
@@ -154,6 +151,11 @@ Tool :: enum {
 	Spray,
 	Hand,
 	Zoom,
+	// switches that can sit in tool groups: clicking one turns it on or off, never becomes the tool
+	Grid,
+	Symmetry,
+	Tiling,
+	Onion,
 }
 
 TOOL_NAMES := [Tool]string {
@@ -173,6 +175,10 @@ TOOL_NAMES := [Tool]string {
 	.Spray          = "Spray (S)",
 	.Hand           = "Hand (H)",
 	.Zoom           = "Zoom (Z)",
+	.Grid           = "Grid (switch)",
+	.Symmetry       = "Symmetry (switch)",
+	.Tiling         = "Tiled Mode (switch)",
+	.Onion          = "Onion Skin (switch)",
 }
 
 Sel_Mode :: enum {
@@ -233,9 +239,11 @@ Options :: struct {
 	ink:         Ink,
 	pattern:     Pattern,
 	onion:       bool,
-	onion_prev:  int,
-	onion_next:  int,
+	onion_prev:  int, // show the previous frame (0 / 1)
+	onion_next:  int, // show the next frame (0 / 1)
+	onion_alpha: int, // percent
 	grid:        bool, // custom grid
+	snap:        bool, // selections, shapes and moves snap to the custom grid while it is shown
 	pixel_grid:  bool,
 	grid_w:      int,
 	grid_h:      int,

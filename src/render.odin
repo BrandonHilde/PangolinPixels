@@ -1,50 +1,37 @@
 package pangolin
 
 import "core:math"
-import rl "vendor:raylib"
 
-tex_canvas: rl.Texture2D
-tex_prev: rl.Texture2D
-tex_next: rl.Texture2D
-tex_checker: rl.Texture2D
+tex_canvas: Texture
+tex_prev: Texture
+tex_next: Texture
+tex_checker: Texture
 tex_w, tex_h: int
+tex_doc: ^Doc // document whose pixels are in tex_canvas
 onion_prev_ok, onion_next_ok: bool
 
-make_tex :: proc(w, h: int) -> rl.Texture2D {
-	img := rl.GenImageColor(i32(w), i32(h), rl.BLANK)
-	t := rl.LoadTextureFromImage(img)
-	rl.UnloadImage(img)
-	rl.SetTextureFilter(t, .POINT)
-	return t
-}
-
 render_init :: proc() {
-	img := rl.GenImageColor(2, 2, rl.BLANK)
 	a := Color{204, 204, 212, 255}
 	b := Color{150, 150, 162, 255}
-	rl.ImageDrawPixel(&img, 0, 0, a)
-	rl.ImageDrawPixel(&img, 1, 1, a)
-	rl.ImageDrawPixel(&img, 1, 0, b)
-	rl.ImageDrawPixel(&img, 0, 1, b)
-	tex_checker = rl.LoadTextureFromImage(img)
-	rl.UnloadImage(img)
-	rl.SetTextureFilter(tex_checker, .POINT)
-	rl.SetTextureWrap(tex_checker, .REPEAT)
+	pix := [4]Color{a, b, b, a}
+	tex_checker = tex_from_pixels(pix[:], 2, 2, .Point)
 }
 
 textures_ensure :: proc(d: ^Doc) {
-	if tex_canvas.id != 0 && tex_w == d.w && tex_h == d.h {
+	if tex_valid(tex_canvas) && tex_w == d.w && tex_h == d.h && tex_doc == d {
 		return
 	}
-	if tex_canvas.id != 0 {
-		rl.UnloadTexture(tex_canvas)
-		rl.UnloadTexture(tex_prev)
-		rl.UnloadTexture(tex_next)
+	if !tex_valid(tex_canvas) || tex_w != d.w || tex_h != d.h {
+		tex_destroy(&tex_canvas)
+		tex_destroy(&tex_prev)
+		tex_destroy(&tex_next)
+		tex_canvas = tex_create(d.w, d.h, .Point)
+		tex_prev = tex_create(d.w, d.h, .Point)
+		tex_next = tex_create(d.w, d.h, .Point)
+		tex_w, tex_h = d.w, d.h
 	}
-	tex_canvas = make_tex(d.w, d.h)
-	tex_prev = make_tex(d.w, d.h)
-	tex_next = make_tex(d.w, d.h)
-	tex_w, tex_h = d.w, d.h
+	// another document's pixels may be in the textures
+	tex_doc = d
 	d.comp_dirty = true
 }
 
@@ -53,18 +40,18 @@ render_refresh :: proc(d: ^Doc) {
 	doc_refresh_comp(d)
 	if d.tex_dirty {
 		d.tex_dirty = false
-		rl.UpdateTexture(tex_canvas, raw_data(d.comp))
+		tex_update(tex_canvas, d.comp)
 		onion_prev_ok, onion_next_ok = false, false
 		if opts.onion {
 			buf := make([]Color, d.w * d.h, context.temp_allocator)
-			if d.active_frame > 0 {
+			if opts.onion_prev > 0 && d.active_frame > 0 {
 				composite(d, d.active_frame - 1, buf)
-				rl.UpdateTexture(tex_prev, raw_data(buf))
+				tex_update(tex_prev, buf)
 				onion_prev_ok = true
 			}
-			if d.active_frame + 1 < len(d.frames) {
+			if opts.onion_next > 0 && d.active_frame + 1 < len(d.frames) {
 				composite(d, d.active_frame + 1, buf)
-				rl.UpdateTexture(tex_next, raw_data(buf))
+				tex_update(tex_next, buf)
 				onion_next_ok = true
 			}
 		}
@@ -85,21 +72,37 @@ canvas_bg_color :: proc() -> Color {
 	return Color{}
 }
 
-draw_canvas_bg :: proc(dst: rl.Rectangle) {
+draw_canvas_bg :: proc(dst: FRect) {
 	if !opts.show_checks {
 		return
 	}
 	if bg_mode == 0 {
-		cell: f32 = 8
-		rl.DrawTexturePro(tex_checker, {0, 0, dst.width / cell, dst.height / cell}, dst, {}, 0, rl.WHITE)
+		draw_tex_tiled(tex_checker, dst, 16)
 	} else {
-		rl.DrawRectangleRec(dst, canvas_bg_color())
+		draw_frect(dst, canvas_bg_color())
 	}
 }
 
+draw_checker :: proc(r: Rect, cell: i32 = 4) {
+	draw_tex_tiled(tex_checker, FRect{f32(r.x), f32(r.y), f32(r.w), f32(r.h)}, f32(cell) * 2)
+}
+
 draw_cell_outline :: proc(x, y, w, h: f32) {
-	rl.DrawRectangleLinesEx({x - 1, y - 1, w + 2, h + 2}, 1, Color{0, 0, 0, 220})
-	rl.DrawRectangleLinesEx({x, y, w, h}, 1, Color{255, 255, 255, 230})
+	t := hair()
+	draw_rect_outline({x - t, y - t, w + 2 * t, h + 2 * t}, Color{0, 0, 0, 220})
+	draw_rect_outline({x, y, w, h}, Color{255, 255, 255, 230})
+}
+
+// One logical pixel wide outline (stays visible over zoomed pixels).
+draw_rect_lines :: proc(r: FRect, c: Color) {
+	draw_rect(r.x, r.y, r.w, 1, c)
+	draw_rect(r.x, r.y + r.h - 1, r.w, 1, c)
+	draw_rect(r.x, r.y + 1, 1, r.h - 2, c)
+	draw_rect(r.x + r.w - 1, r.y + 1, 1, r.h - 2, c)
+}
+
+draw_disc :: proc(cx, cy, r: f32, c: Color) {
+	draw_rrect(cx - r, cy - r, 2 * r, 2 * r, r, c)
 }
 
 render_canvas :: proc(vp: Rect) {
@@ -119,25 +122,26 @@ render_canvas :: proc(vp: Rect) {
 	if opts.tile == .Y || opts.tile == .Both {
 		ny = 1
 	}
-	src := rl.Rectangle{0, 0, f32(d.w), f32(d.h)}
+	src := FRect{0, 0, f32(d.w), f32(d.h)}
 	for ty in -ny ..= ny {
 		for tx in -nx ..= nx {
-			dst := rl.Rectangle{d.ox + f32(tx) * cw, d.oy + f32(ty) * ch, cw, ch}
-			if dst.x > f32(vp.x + vp.w) || dst.y > f32(vp.y + vp.h) || dst.x + dst.width < f32(vp.x) || dst.y + dst.height < f32(vp.y) {
+			dst := FRect{d.ox + f32(tx) * cw, d.oy + f32(ty) * ch, cw, ch}
+			if dst.x > f32(vp.x + vp.w) || dst.y > f32(vp.y + vp.h) || dst.x + dst.w < f32(vp.x) || dst.y + dst.h < f32(vp.y) {
 				continue
 			}
 			draw_canvas_bg(dst)
 			if opts.onion && tx == 0 && ty == 0 {
+				oa := u8(clamp(opts.onion_alpha, 0, 100) * 255 / 100)
 				if onion_prev_ok {
-					rl.DrawTexturePro(tex_prev, src, dst, {}, 0, Color{255, 110, 110, 100})
+					draw_tex(tex_prev, src, dst, Color{255, 110, 110, oa})
 				}
 				if onion_next_ok {
-					rl.DrawTexturePro(tex_next, src, dst, {}, 0, Color{110, 150, 255, 100})
+					draw_tex(tex_next, src, dst, Color{110, 150, 255, oa})
 				}
 			}
-			rl.DrawTexturePro(tex_canvas, src, dst, {}, 0, rl.WHITE)
+			draw_tex(tex_canvas, src, dst)
 			if tx != 0 || ty != 0 {
-				rl.DrawRectangleRec(dst, Color{0, 0, 0, 40})
+				draw_frect(dst, Color{0, 0, 0, 40})
 			}
 		}
 	}
@@ -220,15 +224,15 @@ render_canvas :: proc(vp: Rect) {
 		cx, cy := center(d, curve.p[2])
 		ex, ey := center(d, curve.p[3])
 		guide := Color{255, 255, 255, 150}
-		rl.DrawLineV({ax, ay}, {bx, by}, guide)
-		rl.DrawLineV({cx, cy}, {ex, ey}, guide)
-		rl.DrawCircleV({bx, by}, 4, Color{0, 0, 0, 230})
-		rl.DrawCircleV({bx, by}, 3, Color{255, 120, 200, 255})
-		rl.DrawCircleV({cx, cy}, 4, Color{0, 0, 0, 230})
-		rl.DrawCircleV({cx, cy}, 3, Color{255, 120, 200, 255})
+		draw_line({ax, ay}, {bx, by}, guide)
+		draw_line({cx, cy}, {ex, ey}, guide)
+		draw_disc(bx, by, 4, Color{0, 0, 0, 230})
+		draw_disc(bx, by, 3, Color{255, 120, 200, 255})
+		draw_disc(cx, cy, 4, Color{0, 0, 0, 230})
+		draw_disc(cx, cy, 3, Color{255, 120, 200, 255})
 		for pt in ([2][2]f32{{ax, ay}, {ex, ey}}) {
-			rl.DrawRectangleRec({pt.x - 4, pt.y - 4, 8, 8}, Color{0, 0, 0, 230})
-			rl.DrawRectangleRec({pt.x - 3, pt.y - 3, 6, 6}, Color{255, 255, 255, 255})
+			draw_rect(pt.x - 4, pt.y - 4, 8, 8, Color{0, 0, 0, 230})
+			draw_rect(pt.x - 3, pt.y - 3, 6, 6, Color{255, 255, 255, 255})
 		}
 	}
 
@@ -268,27 +272,18 @@ render_cursor :: proc(d: ^Doc) {
 						continue
 					}
 				}
-				rl.DrawRectangleRec({d.ox + f32(p.x + dx) * z, d.oy + f32(p.y + dy) * z, z, z}, col)
+				draw_rect(d.ox + f32(p.x + dx) * z, d.oy + f32(p.y + dy) * z, z, z, col)
 			}
 		}
-		rl.DrawRectangleLinesEx(
-			{d.ox + f32(p.x + lo) * z, d.oy + f32(p.y + lo) * z, f32(n) * z, f32(n) * z},
-			1,
-			Color{255, 255, 255, 160},
-		)
+		draw_rect_lines({d.ox + f32(p.x + lo) * z, d.oy + f32(p.y + lo) * z, f32(n) * z, f32(n) * z}, Color{255, 255, 255, 160})
 		return
 	}
 	if t == .Spray {
 		r := f32(max(opts.brush_size, 2)) / 2
-		rl.DrawCircleLines(
-			i32(d.ox + (f32(p.x) + 0.5) * z),
-			i32(d.oy + (f32(p.y) + 0.5) * z),
-			r * z,
-			Color{255, 255, 255, 200},
-		)
+		draw_circle_outline(d.ox + (f32(p.x) + 0.5) * z, d.oy + (f32(p.y) + 0.5) * z, r * z, Color{255, 255, 255, 200})
 	}
 	if brush && t != .Eraser && px_valid(p) {
-		rl.DrawRectangleRec({d.ox + f32(p.x) * z, d.oy + f32(p.y) * z, z, z}, Color{fg.r, fg.g, fg.b, 120})
+		draw_rect(d.ox + f32(p.x) * z, d.oy + f32(p.y) * z, z, z, Color{fg.r, fg.g, fg.b, 120})
 	}
 	draw_cell_outline(d.ox + f32(p.x) * z, d.oy + f32(p.y) * z, z, z)
 }

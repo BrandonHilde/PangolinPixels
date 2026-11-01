@@ -4,6 +4,7 @@
 *.pdb
 *.lib
 *.ilk
+*.dll
 
 # per-user settings and scratch
 *.cfg

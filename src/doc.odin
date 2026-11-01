@@ -362,6 +362,20 @@ doc_move_layer :: proc(d: ^Doc, dir: int) -> bool {
 	return true
 }
 
+// Moves layer `from` to index `to` (one undo step), keeping it the active layer.
+doc_move_layer_to :: proc(d: ^Doc, from, to: int) -> bool {
+	if from == to || from < 0 || to < 0 || from >= len(d.layers) || to >= len(d.layers) {
+		return false
+	}
+	history_push(d)
+	l := d.layers[from]
+	ordered_remove(&d.layers, from)
+	inject_at(&d.layers, to, l)
+	d.active_layer = to
+	doc_touch(d)
+	return true
+}
+
 doc_merge_down :: proc(d: ^Doc) -> bool {
 	i := d.active_layer
 	if i <= 0 {

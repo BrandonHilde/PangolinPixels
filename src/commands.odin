@@ -1,7 +1,6 @@
 package pangolin
 
 import "core:fmt"
-import rl "vendor:raylib"
 
 Cmd :: enum {
 	None,
@@ -87,6 +86,7 @@ Cmd :: enum {
 	Zoom_8,
 	Zoom_16,
 	Toggle_Grid,
+	Toggle_Snap,
 	Toggle_Pixel_Grid,
 	Toggle_Onion,
 	Toggle_Sym_X,
@@ -95,6 +95,7 @@ Cmd :: enum {
 	Toggle_Checks,
 	Toggle_Timeline,
 	Toggle_Preview,
+	Toggle_Canvas_Mode,
 	Grid_Settings,
 	Canvas_Bg,
 	Preferences,
@@ -121,11 +122,17 @@ Cmd :: enum {
 	Brush_Bigger,
 	Help_Keys,
 	About,
+	Ws_Manage,
+	Ws_Import,
+	Ws_Export,
+	// saved and built-in workspaces, in the order of `ws_entries`
+	Ws_First,
+	Ws_Last = Ws_First + WS_MAX - 1,
 }
 
 Shortcut :: struct {
 	cmd:                Cmd,
-	key:                rl.KeyboardKey,
+	key:                KeyboardKey,
 	ctrl, shift, alt:   bool,
 }
 
@@ -158,16 +165,20 @@ SHORTCUTS := [?]Shortcut {
 	{.Frame_First, .HOME, false, false, false},
 	{.Frame_Last, .END, false, false, false},
 	{.Zoom_In, .EQUAL, false, false, false},
+	{.Zoom_In, .EQUAL, true, false, false},
 	{.Zoom_In, .KP_ADD, false, false, false},
 	{.Zoom_Out, .MINUS, false, false, false},
+	{.Zoom_Out, .MINUS, true, false, false},
 	{.Zoom_Out, .KP_SUBTRACT, false, false, false},
-	{.Zoom_Fit, .ZERO, false, false, false},
-	{.Zoom_1, .ONE, false, false, false},
-	{.Zoom_2, .TWO, false, false, false},
-	{.Zoom_4, .THREE, false, false, false},
-	{.Zoom_8, .FOUR, false, false, false},
-	{.Zoom_16, .FIVE, false, false, false},
+	{.Zoom_Fit, .ZERO, true, false, false},
+	{.Zoom_1, .ONE, true, false, false},
+	{.Zoom_2, .TWO, true, false, false},
+	{.Zoom_4, .THREE, true, false, false},
+	{.Zoom_8, .FOUR, true, false, false},
+	{.Zoom_16, .FIVE, true, false, false},
+	{.Toggle_Canvas_Mode, .TAB, false, false, false},
 	{.Toggle_Grid, .APOSTROPHE, true, false, false},
+	{.Toggle_Snap, .SEMICOLON, true, true, false},
 	{.Toggle_Pixel_Grid, .APOSTROPHE, true, true, false},
 	{.Toggle_Onion, .O, false, false, true},
 	{.Toggle_Sym_X, .X, false, true, false},
@@ -196,12 +207,16 @@ SHORTCUTS := [?]Shortcut {
 	{.Help_Keys, .F1, false, false, false},
 }
 
-key_name :: proc(k: rl.KeyboardKey) -> string {
+key_name :: proc(k: KeyboardKey) -> string {
 	#partial switch k {
 	case .A ..= .Z:
 		return fmt.tprintf("%c", rune(int(k)))
 	case .ZERO ..= .NINE:
 		return fmt.tprintf("%c", rune(int(k)))
+	case .F1 ..= .F12:
+		return fmt.tprintf("F%d", int(k) - int(KeyboardKey.F1) + 1)
+	case .TAB:
+		return "Tab"
 	case .DELETE:
 		return "Del"
 	case .BACKSPACE:
@@ -226,14 +241,14 @@ key_name :: proc(k: rl.KeyboardKey) -> string {
 		return "-"
 	case .KP_SUBTRACT:
 		return "Num-"
+	case .SEMICOLON:
+		return ";"
 	case .APOSTROPHE:
 		return "'"
 	case .LEFT_BRACKET:
 		return "["
 	case .RIGHT_BRACKET:
 		return "]"
-	case .F1:
-		return "F1"
 	}
 	return "?"
 }
@@ -257,19 +272,26 @@ shortcuts_update :: proc() {
 	if ui.focus_id != 0 || dialog.kind != .None || popup.open {
 		return
 	}
+	if tool_groups_key_capture() {
+		return
+	}
 	// A bezier curve being edited is applied with Enter and cancelled with Escape;
 	// other shortcuts are ignored until it is finished.
 	if curve.active {
-		if rl.IsKeyPressed(.ENTER) || rl.IsKeyPressed(.KP_ENTER) {
+		if IsKeyPressed(.ENTER) || IsKeyPressed(.KP_ENTER) {
 			curve_commit()
-		} else if rl.IsKeyPressed(.ESCAPE) {
+		} else if IsKeyPressed(.ESCAPE) {
 			curve_cancel()
 		}
 		return
 	}
+	// group hotkeys come before the fixed shortcuts, so a group can take over a tool's letter
+	if !drag.active && tool_groups_hotkeys() {
+		return
+	}
 	// Key-hold conveniences must not trigger commands while dragging on the canvas.
 	for s in SHORTCUTS {
-		if !(rl.IsKeyPressed(s.key) || (s.cmd == .Frame_Prev || s.cmd == .Frame_Next || s.cmd == .Brush_Smaller || s.cmd == .Brush_Bigger || s.cmd == .Undo || s.cmd == .Redo) && rl.IsKeyPressedRepeat(s.key)) {
+		if !(IsKeyPressed(s.key) || (s.cmd == .Frame_Prev || s.cmd == .Frame_Next || s.cmd == .Brush_Smaller || s.cmd == .Brush_Bigger || s.cmd == .Undo || s.cmd == .Redo) && IsKeyPressedRepeat(s.key)) {
 			continue
 		}
 		if s.ctrl != ui.ctrl || s.shift != ui.shift || s.alt != ui.alt {
@@ -290,12 +312,21 @@ shortcuts_update :: proc() {
 		if key_hit(.DOWN) do dy = 1
 		if dx != 0 || dy != 0 {
 			s := ui.shift ? 8 : 1
-			edit_nudge(dx * s, dy * s)
+			if snap_on() {
+				edit_nudge(dx * opts.grid_w, dy * opts.grid_h)
+			} else {
+				edit_nudge(dx * s, dy * s)
+			}
 		}
 	}
 }
 
 select_tool :: proc(t: Tool) {
+	if tool_is_toggle(t) {
+		tool_toggle(t)
+		return
+	}
+	options_show_tool() // picking a tool brings its settings back to the options bar
 	if t != .Curve {
 		curve_commit()
 	}
@@ -359,7 +390,11 @@ run_cmd :: proc(cmd: Cmd) {
 		curve_commit()
 	}
 	if cmd >= .Tool_Pencil && cmd <= .Tool_Zoom {
-		select_tool(Tool(int(cmd) - int(Cmd.Tool_Pencil)))
+		select_tool_in_group(Tool(int(cmd) - int(Cmd.Tool_Pencil)))
+		return
+	}
+	if cmd >= .Ws_First && cmd <= .Ws_Last {
+		workspace_apply_index(int(cmd) - int(Cmd.Ws_First))
 		return
 	}
 	// Anything that edits stops playback
@@ -562,18 +597,23 @@ run_cmd :: proc(cmd: Cmd) {
 	case .Zoom_16:
 		zoom_center(16)
 	case .Toggle_Grid:
-		opts.grid = !opts.grid
+		switch_set(.Grid, !opts.grid)
+	case .Toggle_Snap:
+		opts.snap = !opts.snap
+		set_status(opts.snap ? (opts.grid ? "Snap to grid on" : "Snap to grid on (shows with the grid, Ctrl+')") : "Snap to grid off")
 	case .Toggle_Pixel_Grid:
 		opts.pixel_grid = !opts.pixel_grid
 	case .Toggle_Onion:
-		opts.onion = !opts.onion
-		doc.comp_dirty = true
+		switch_set(.Onion, !opts.onion)
 	case .Toggle_Sym_X:
 		opts.sym_x = !opts.sym_x
+		switch_changed(.Symmetry)
 	case .Toggle_Sym_Y:
 		opts.sym_y = !opts.sym_y
+		switch_changed(.Symmetry)
 	case .Cycle_Tile:
 		opts.tile = Tile_Mode((int(opts.tile) + 1) % len(Tile_Mode))
+		switch_changed(.Tiling)
 		set_statusf("Tiled mode: %v", opts.tile)
 	case .Toggle_Checks:
 		opts.show_checks = !opts.show_checks
@@ -581,6 +621,8 @@ run_cmd :: proc(cmd: Cmd) {
 		show_timeline = !show_timeline
 	case .Toggle_Preview:
 		show_preview = !show_preview
+	case .Toggle_Canvas_Mode:
+		canvas_mode = !canvas_mode
 	case .Grid_Settings:
 		dialog_open(.Grid)
 	case .Canvas_Bg:
@@ -588,7 +630,13 @@ run_cmd :: proc(cmd: Cmd) {
 	case .Preferences:
 		dialog_open(.Prefs)
 
-	case .Tool_Pencil ..= .Tool_Zoom:
+	case .Tool_Pencil ..= .Tool_Zoom, .Ws_First ..= .Ws_Last:
+	case .Ws_Manage:
+		dialog_open(.Workspaces)
+	case .Ws_Import:
+		workspace_import()
+	case .Ws_Export:
+		workspace_export()
 	case .Swap_Colors:
 		a, b := fg, bg
 		set_fg(b)
