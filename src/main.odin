@@ -1,22 +1,53 @@
 package pangolin
 
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:strconv"
 import "core:strings"
 
-choose_scale :: proc() -> i32 {
+// The UI scale, as a percentage. Below 100% the text is unreadable; above it, steps of a quarter
+// keep the sizes of text and icons close to whole numbers of pixels.
+UI_SCALE_MIN :: 100
+UI_SCALE_MAX :: 400
+UI_SCALE_STEP :: 25
+
+// The layout needs this much room, in logical units.
+UI_MIN_W :: 900
+UI_MIN_H :: 560
+
+ui_scale_round :: proc(pct: f32) -> int {
+	return clamp(int(math.round(pct / UI_SCALE_STEP)) * UI_SCALE_STEP, UI_SCALE_MIN, UI_SCALE_MAX)
+}
+
+// The size that suits a display: as large as leaves the whole screen 1280 x 720 logical units, so the
+// interface takes up about the same share of any monitor, or more if the operating system is set to
+// enlarge everything.
+ui_scale_auto :: proc(display_w, display_h, os_scale: f32) -> int {
+	return ui_scale_round(max(min(display_w / 1280, display_h / 720), os_scale) * 100)
+}
+
+// A value from the settings file or --scale. 0 is auto; 1-4 are whole multiples, as settings
+// saved before the scale became a percentage have it.
+ui_scale_parse :: proc(v: int) -> int {
+	if v <= 0 {
+		return 0
+	}
+	return ui_scale_round(f32(v <= 4 ? v * 100 : v))
+}
+
+// What the user picked, or what suits the display the window is on.
+ui_scale_wanted :: proc() -> int {
 	if ui_scale_pref > 0 {
-		return i32(ui_scale_pref)
+		return ui_scale_pref
 	}
-	mh := gfx_monitor_height()
-	switch {
-	case mh >= 2000:
-		return 3
-	case mh >= 1350:
-		return 2
-	}
-	return 1
+	return ui_scale_auto(gfx_display_info())
+}
+
+// The largest scale that leaves the layout the room it needs in a window of this size.
+ui_scale_fit :: proc(sw, sh: int) -> int {
+	pct := min(sw * 100 / UI_MIN_W, sh * 100 / UI_MIN_H)
+	return max(pct / UI_SCALE_STEP * UI_SCALE_STEP, UI_SCALE_MIN)
 }
 
 // Builds a small sample sprite so the UI can be inspected without user input.
@@ -86,7 +117,8 @@ main :: proc() {
 			shot_path = args[i + 1]
 			i += 1
 		case a == "--scale" && i + 1 < len(args):
-			ui_scale_pref, _ = strconv.parse_int(args[i + 1])
+			v, _ := strconv.parse_int(args[i + 1])
+			ui_scale_pref = ui_scale_parse(v)
 			i += 1
 		case a == "--size" && i + 1 < len(args):
 			wh := strings.split(args[i + 1], "x", context.temp_allocator)
@@ -186,13 +218,15 @@ main :: proc() {
 		}
 
 		sw, sh := int(gfx.pw), int(gfx.ph)
-		ui.scale = choose_scale()
 		// never let the logical resolution drop below what the layout needs
-		for ui.scale > 1 && (sw / int(ui.scale) < 900 || sh / int(ui.scale) < 560) {
-			ui.scale -= 1
+		ui.scale = f32(min(ui_scale_wanted(), ui_scale_fit(sw, sh))) / 100
+		if ui.scale != gfx.scale {
+			views_rescale(gfx.scale, ui.scale)
 		}
 		gfx_set_scale(ui.scale)
-		ui.w, ui.h = max(sw / int(ui.scale), 1), max(sh / int(ui.scale), 1)
+		// rounded up, so that full-window fills reach the last row of pixels at any scale
+		ui.w = max(int(math.ceil(f32(sw) / ui.scale)), 1)
+		ui.h = max(int(math.ceil(f32(sh) / ui.scale)), 1)
 
 		ui_begin_frame()
 		ui.input_layer = (dialog.kind != .None ? 2 : 0) + (popup.open ? 1 : 0)

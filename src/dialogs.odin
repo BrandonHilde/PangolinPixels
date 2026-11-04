@@ -45,7 +45,7 @@ Dialog :: struct {
 
 dialog: Dialog
 
-ui_scale_pref := 0 // 0 = auto
+ui_scale_pref := 0 // percent, 0 = auto
 
 BG_FILL_NAMES := [?]string{"Transparent", "White", "Black", "Foreground", "Background"}
 DIALOG_W_DEFAULT :: 260
@@ -102,8 +102,10 @@ dialog_open :: proc(k: Dialog_Kind) {
 		dialog.flag = opts.grid
 		dialog.flag2 = opts.snap
 	case .Prefs:
-		dialog.a = ui_scale_pref
+		dialog.a = ui_scale_wanted()
 		dialog.b = bg_mode
+		dialog.c = ui_scale_pref // to go back to on Cancel
+		dialog.flag = ui_scale_pref == 0
 	case .Outline:
 		dialog.flag = false
 	case .Replace_Color:
@@ -669,16 +671,28 @@ dlg_grid :: proc() {
 	}
 }
 
-UI_SCALE_NAMES := [?]string{"Auto", "1x", "2x", "3x", "4x"}
 BG_MODE_NAMES := [?]string{"Checkerboard", "Black", "White", "Gray", "Custom color"}
 
 dlg_prefs :: proc() {
-	c := dialog_frame("Preferences", 280, 150)
+	c := dialog_frame("Preferences", 280, 182)
 	y := c.y
 	text(c.x, y + 3, "UI scale", C_TEXT)
-	nv, ch := combo(Rect{c.x + 110, y, 100, 14}, UI_SCALE_NAMES[:], dialog.a)
-	if ch {
-		dialog.a = nv
+	if slider(Rect{c.x + 110, y, c.w - 110, 14}, &dialog.a, UI_SCALE_MIN, UI_SCALE_MAX, "", "How large the interface is drawn", "%", step = UI_SCALE_STEP) {
+		dialog.flag = false
+	}
+	y += 18
+	checkbox(c.x + 110, y, "Auto-size to the display", &dialog.flag)
+	// Takes effect as soon as the slider is let go, not while it is dragged: the dialog itself
+	// changes size and would move the slider out from under the mouse.
+	if dialog.flag {
+		ui_scale_pref = 0
+		dialog.a = ui_scale_wanted()
+	} else if !ui.down[0] {
+		ui_scale_pref = dialog.a
+	}
+	y += 16
+	if fit := ui_scale_fit(int(gfx.pw), int(gfx.ph)); dialog.a > fit {
+		text(c.x + 110, y + 3, fmt.tprintf("This window fits up to %d%%", fit), C_TEXT_DIM)
 	}
 	y += 20
 	text(c.x, y + 3, "Canvas background", C_TEXT)
@@ -692,10 +706,13 @@ dlg_prefs :: proc() {
 	checkbox(c.x, y, "Show symmetry guides", &opts.sym_guides)
 	ok, cancel := dialog_buttons(c)
 	if cancel {
+		ui_scale_pref = dialog.c
 		dialog_close()
 	}
 	if ok {
-		ui_scale_pref = dialog.a
+		if !dialog.flag {
+			ui_scale_pref = dialog.a
+		}
 		bg_mode = dialog.b
 		dialog_close()
 	}

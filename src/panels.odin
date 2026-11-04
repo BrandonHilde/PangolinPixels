@@ -55,11 +55,15 @@ main_ui :: proc() {
 panel_viewport :: proc(viewport: Rect) {
 	// keep the picture where it was on screen when the viewport changes size
 	@(static) prev_vp: Rect
-	if doc.view_init && prev_vp.w > 0 && (prev_vp.w != viewport.w || prev_vp.h != viewport.h || prev_vp.x != viewport.x || prev_vp.y != viewport.y) {
-		doc.ox += f32(viewport.x + viewport.w / 2 - prev_vp.x - prev_vp.w / 2)
-		doc.oy += f32(viewport.y + viewport.h / 2 - prev_vp.y - prev_vp.h / 2)
+	@(static) prev_scale: f32
+	if doc.view_init && prev_vp.w > 0 && (prev_vp != viewport || prev_scale != gfx.scale) {
+		// the old viewport's centre, in today's units if the UI scale just changed
+		k := prev_scale / gfx.scale
+		doc.ox += f32(viewport.x) + f32(viewport.w) / 2 - (f32(prev_vp.x) + f32(prev_vp.w) / 2) * k
+		doc.oy += f32(viewport.y) + f32(viewport.h) / 2 - (f32(prev_vp.y) + f32(prev_vp.h) / 2) * k
 	}
 	prev_vp = viewport
+	prev_scale = gfx.scale
 	canvas_update(viewport)
 	render_canvas(viewport)
 }
@@ -901,8 +905,8 @@ panel_preview :: proc(r: Rect) {
 		return
 	}
 	z := min(f32(r.w - 4) / f32(d.w), f32(r.h - 4) / f32(d.h))
-	if z >= 1 {
-		z = f32(int(z))
+	if z * gfx.scale >= 1 {
+		z = math.floor(z * gfx.scale) / gfx.scale // a whole number of screen pixels per sprite pixel
 	}
 	w := f32(d.w) * z
 	h := f32(d.h) * z
@@ -1372,7 +1376,7 @@ panel_status :: proc() {
 	oui.separator(uictx, "sep3")
 	oui.label(uictx, "frame", fmt.tprintf("Frame %d/%d", d.active_frame + 1, len(d.frames)))
 	oui.separator(uictx, "sep4")
-	oui.label(uictx, "zoom", fmt.tprintf("%d%%", int(d.zoom * 100 + 0.5)), {class = "strong"})
+	oui.label(uictx, "zoom", fmt.tprintf("%d%%", int(d.zoom * gfx.scale * 100 + 0.5)), {class = "strong"})
 }
 
 // Pixel position and colour under the pointer, in the status bar.

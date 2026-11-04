@@ -215,10 +215,14 @@ gfx_time :: proc() -> f64 {
 	return f64(sdl.GetPerformanceCounter() - gfx.t0) / f64(sdl.GetPerformanceFrequency())
 }
 
-// The display the window opened on, in pixels.
-gfx_monitor_height :: proc() -> int {
-	dm := sdl.GetDesktopDisplayMode(sdl.GetPrimaryDisplay())
-	return dm != nil ? int(dm.h) : 1080
+// The display the window is on: its size in pixels, and how much the operating system enlarges things.
+gfx_display_info :: proc() -> (width, height, os_scale: f32) {
+	width, height = 1920, 1080
+	if dm := sdl.GetDesktopDisplayMode(sdl.GetDisplayForWindow(gfx.win)); dm != nil {
+		density := max(dm.pixel_density, 1)
+		width, height = f32(dm.w) * density, f32(dm.h) * density
+	}
+	return width, height, sdl.GetWindowDisplayScale(gfx.win)
 }
 
 gfx_set_title :: proc(s: string) {
@@ -478,11 +482,11 @@ gfx_show_cursor :: proc(show: bool) {
 
 // Frame ----------------------------------------------------------------------
 
-gfx_set_scale :: proc(s: i32) {
-	if f32(s) != gfx.scale {
+gfx_set_scale :: proc(s: f32) {
+	if s != gfx.scale {
 		shape_clear_cache()
 	}
-	gfx.scale = f32(s)
+	gfx.scale = s
 	sdl.SetRenderScale(gfx.ren, gfx.scale, gfx.scale)
 }
 

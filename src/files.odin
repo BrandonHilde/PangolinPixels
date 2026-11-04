@@ -527,7 +527,7 @@ files_drag_run :: proc() {
 		} else if on_canvas {
 			curve_commit()
 			stop_playback()
-			import_as_layer(path, screen_to_canvas(ui.mx, ui.my))
+			import_as_layer(path, pointer_to_canvas())
 		}
 		return
 	}
@@ -555,7 +555,7 @@ files_drag_run :: proc() {
 	if on_canvas && !is_project {
 		// at the canvas's zoom, cut off where the sprite ends: what the layer will hold
 		z := doc.zoom
-		x, y := image_place(e.img_w, e.img_h, screen_to_canvas(ui.mx, ui.my))
+		x, y := image_place(e.img_w, e.img_h, pointer_to_canvas())
 		dst := FRect{doc.ox + f32(x) * z, doc.oy + f32(y) * z, f32(e.img_w) * z, f32(e.img_h) * z}
 		clip_begin(canvas_vp)
 		clip_begin(Rect{i32(math.floor(doc.ox)), i32(math.floor(doc.oy)), i32(math.ceil(f32(doc.w) * z)), i32(math.ceil(f32(doc.h) * z))})

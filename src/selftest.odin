@@ -510,6 +510,24 @@ selftest :: proc() -> int {
 
 	selftest_tool_groups()
 
+	// --- UI scale ---
+	check(ui_scale_auto(1920, 1080, 1) == 150, "auto scale on a 1080p display")
+	check(ui_scale_auto(2560, 1440, 1) == 200, "auto scale on a 1440p display")
+	check(ui_scale_auto(3840, 2160, 1) == 300, "auto scale on a 4K display")
+	check(ui_scale_auto(2560, 1600, 1) == 200, "auto scale on a 16:10 display goes by its width")
+	check(ui_scale_auto(3440, 1440, 1) == 200, "auto scale on an ultrawide display goes by its height")
+	check(ui_scale_auto(1366, 768, 1) == 100, "auto scale never goes below 100%")
+	check(ui_scale_auto(15360, 8640, 1) == 400, "auto scale stops at the slider's maximum")
+	check(ui_scale_auto(2560, 1440, 2.5) == 250, "auto scale follows a larger OS scale")
+	check(ui_scale_parse(0) == 0, "a saved scale of 0 stays auto")
+	check(ui_scale_parse(2) == 200, "a saved 2x from older settings reads as 200%")
+	check(ui_scale_parse(150) == 150, "a saved percentage is kept")
+	check(ui_scale_parse(137) == 125, "a saved percentage lands on a slider step")
+	check(ui_scale_parse(9000) == UI_SCALE_MAX, "a saved percentage stays in range")
+	check(ui_scale_fit(1632, 918) == 150, "a window limits the scale to what fits its layout")
+	check(ui_scale_fit(900, 560) == 100, "the smallest window fits 100%")
+	check(ui_scale_fit(300, 200) == 100, "the scale never drops below 100%, however small the window")
+
 	fmt.printf("== %d failures ==\n", fails)
 	return fails
 }

@@ -63,7 +63,8 @@ Drag image/project files onto the window to open them. `PangolinPixels --selftes
   import as layer, import sprite sheet; export PNG, sprite sheet, PNG sequence, animated GIF (median-cut quantiser),
   Multiple documents in tabs; unsaved-change prompts; unlimited undo (256 steps).
 - **Canvas background**: checkerboard or any solid colour (View > Canvas Background, or the swatch in the options bar); remembered between sessions.
-- UI scaled by a whole number (auto / 1x-4x in Preferences), with text and icons drawn sharp at the screen's resolution.
+- UI scale slider in Preferences (100-400%), auto-sized to the display until you set your own, with text and icons drawn
+  sharp at the screen's resolution. Sprite pixels stay even at every scale.
 
 ## Shortcuts (F1 in the app shows the full list)
 | | |
@@ -102,7 +103,7 @@ drawn as a font (`font-family: icons`), so `color` and `font-size` style them li
 
 ## Developer flags
 `--selftest` (tests), `--demo` (sample sprite), `--shot file.png` (screenshot after a few frames, `--shot-frame N` to
-pick the frame), `--size WxH`, `--scale N`, `--menu N` (open a menu), `--dialog N`,
+pick the frame), `--size WxH`, `--scale N` (percent, or 1-4 for whole multiples), `--menu N` (open a menu), `--dialog N`,
 `--clicks "frame:x,y;..."` (left clicks at window pixels on those frames, `frame:x,y,r` for a right click),
 `--convert image` (open the pixel-art converter).
 

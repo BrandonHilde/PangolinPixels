@@ -1,6 +1,7 @@
 package pangolin
 
 import "core:fmt"
+import "core:math"
 
 Cmd :: enum {
 	None,
@@ -334,9 +335,13 @@ select_tool :: proc(t: Tool) {
 	cur_tool = t
 }
 
-zoom_steps := [?]f32{0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64}
+// Zoom levels are screen pixels per sprite pixel, whatever the UI scale. From 1 up they are whole
+// numbers, so all the sprite's pixels come out the same size. (doc.zoom itself is in logical units.)
+zoom_steps := [?]f32{0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256}
 
-zoom_step :: proc(z: f32, dir: int) -> f32 {
+// The next zoom level up or down from the current document's.
+zoom_step :: proc(dir: int) -> f32 {
+	z := doc.zoom * gfx.scale
 	if dir > 0 {
 		for s in zoom_steps {
 			if s > z + 0.001 {
@@ -353,9 +358,9 @@ zoom_step :: proc(z: f32, dir: int) -> f32 {
 	return zoom_steps[0]
 }
 
-// Zoom keeping the canvas point under (sx, sy) fixed.
-zoom_at :: proc(nz: f32, sx, sy: f32) {
-	z := clamp(nz, 0.125, 64)
+// Zoom to a level in `zoom_steps`, keeping the canvas point under (sx, sy) fixed.
+zoom_at :: proc(level: f32, sx, sy: f32) {
+	z := clamp(level, zoom_steps[0], zoom_steps[len(zoom_steps) - 1]) / gfx.scale
 	cx := (sx - doc.ox) / doc.zoom
 	cy := (sy - doc.oy) / doc.zoom
 	doc.zoom = z
@@ -363,9 +368,19 @@ zoom_at :: proc(nz: f32, sx, sy: f32) {
 	doc.oy = sy - cy * z
 }
 
-zoom_center :: proc(nz: f32) {
+zoom_center :: proc(level: f32) {
 	vp := canvas_vp
-	zoom_at(nz, f32(vp.x) + f32(vp.w) / 2, f32(vp.y) + f32(vp.h) / 2)
+	zoom_at(level, f32(vp.x) + f32(vp.w) / 2, f32(vp.y) + f32(vp.h) / 2)
+}
+
+// The UI scale changed: every canvas stays exactly where it was on screen, at the same size.
+views_rescale :: proc(old_scale, new_scale: f32) {
+	k := old_scale / new_scale
+	for d in docs {
+		d.zoom *= k
+		d.ox *= k
+		d.oy *= k
+	}
 }
 
 view_fit :: proc(d: ^Doc) {
@@ -375,11 +390,11 @@ view_fit :: proc(d: ^Doc) {
 	}
 	zx := f32(vp.w - 40) / f32(d.w)
 	zy := f32(vp.h - 40) / f32(d.h)
-	z := min(zx, zy)
+	z := min(zx, zy) * gfx.scale // screen pixels per sprite pixel
 	if z >= 1 {
-		z = f32(int(z))
+		z = math.floor(z)
 	}
-	z = clamp(z, 0.125, 64)
+	z = clamp(z, zoom_steps[0], zoom_steps[len(zoom_steps) - 1]) / gfx.scale
 	d.zoom = z
 	d.ox = f32(vp.x) + (f32(vp.w) - f32(d.w) * z) / 2
 	d.oy = f32(vp.y) + (f32(vp.h) - f32(d.h) * z) / 2
@@ -582,9 +597,9 @@ run_cmd :: proc(cmd: Cmd) {
 		}
 
 	case .Zoom_In:
-		zoom_center(zoom_step(doc.zoom, 1))
+		zoom_center(zoom_step(1))
 	case .Zoom_Out:
-		zoom_center(zoom_step(doc.zoom, -1))
+		zoom_center(zoom_step(-1))
 	case .Zoom_Fit:
 		view_fit(doc)
 	case .Zoom_1:

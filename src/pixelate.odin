@@ -1,6 +1,7 @@
 package pangolin
 
 import "core:fmt"
+import "core:math"
 import "core:slice"
 
 // Image -> pixel art converter: box-filter the source down to a fixed size, then map
@@ -357,15 +358,15 @@ pixelate_draw_fit :: proc(r: Rect, tex: Texture, tw, th: int, integer_zoom: bool
 		return
 	}
 	z := min(f32(r.w - 4) / f32(tw), f32(r.h - 4) / f32(th))
-	if integer_zoom && z >= 1 {
-		z = f32(int(z))
+	if integer_zoom && z * gfx.scale >= 1 {
+		z = math.floor(z * gfx.scale) / gfx.scale // a whole number of screen pixels per image pixel
 	}
-	w := i32(f32(tw) * z)
-	h := i32(f32(th) * z)
-	dst := Rect{r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, max(w, 1), max(h, 1)}
+	w := max(f32(tw) * z, hair())
+	h := max(f32(th) * z, hair())
+	dst := FRect{snap(f32(r.x) + (f32(r.w) - w) / 2), snap(f32(r.y) + (f32(r.h) - h) / 2), w, h}
 	clip_begin(r)
-	draw_checker(dst, 4)
-	draw_tex(tex, {0, 0, f32(tw), f32(th)}, {f32(dst.x), f32(dst.y), f32(dst.w), f32(dst.h)})
+	draw_tex_tiled(tex_checker, dst, 8)
+	draw_tex(tex, {0, 0, f32(tw), f32(th)}, dst)
 	clip_end()
 }
 

@@ -1,5 +1,7 @@
 package pangolin
 
+import "core:math"
+
 APP_NAME :: "Pangolin Pixels"
 APP_TAGLINE :: "Pixel art, scale by scale."
 
@@ -74,5 +76,10 @@ brand_init :: proc() {
 
 // Draws the logo at an integer scale.
 logo_draw :: proc(x, y, scale: i32) {
-	draw_tex(logo_tex, {0, 0, LOGO_SIZE, LOGO_SIZE}, {f32(x), f32(y), f32(LOGO_SIZE * scale), f32(LOGO_SIZE * scale)})
+	// a whole number of screen pixels per logo pixel keeps the art even at any UI scale; centred on
+	// where the exact size would have gone
+	exact := f32(LOGO_SIZE * scale)
+	size := LOGO_SIZE * max(math.round(f32(scale) * gfx.scale), 1) / gfx.scale
+	off := (exact - size) / 2
+	draw_tex(logo_tex, {0, 0, LOGO_SIZE, LOGO_SIZE}, {snap(f32(x) + off), snap(f32(y) + off), size, size})
 }

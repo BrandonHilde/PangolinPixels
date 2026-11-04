@@ -1,6 +1,5 @@
 package pangolin
 
-import "core:math"
 
 tex_canvas: Texture
 tex_prev: Texture
@@ -146,24 +145,27 @@ render_canvas :: proc(vp: Rect) {
 		}
 	}
 
-	x0 := i32(d.ox)
-	y0 := i32(d.oy)
-	x1 := i32(d.ox + cw)
-	y1 := i32(d.oy + ch)
+	// Overlays follow the edges of the sprite's pixels, which need not fall on whole logical units,
+	// so they are placed in screen pixels (see `snap`).
+	t := hair()
+	x0, y0 := snap(d.ox), snap(d.oy)
+	x1, y1 := snap(d.ox + cw), snap(d.oy + ch)
+	vx0, vy0 := f32(vp.x), f32(vp.y)
+	vx1, vy1 := f32(vp.x + vp.w), f32(vp.y + vp.h)
 
 	// pixel grid
 	if opts.pixel_grid && z >= 6 {
 		gc := Color{128, 128, 140, 70}
 		for i in 1 ..< d.w {
-			x := i32(d.ox + f32(i) * z)
-			if x >= vp.x && x < vp.x + vp.w {
-				vline(x, max(y0, vp.y), min(y1, vp.y + vp.h) - max(y0, vp.y), gc)
+			x := snap(d.ox + f32(i) * z)
+			if x >= vx0 && x < vx1 {
+				draw_rect(x, max(y0, vy0), t, min(y1, vy1) - max(y0, vy0), gc)
 			}
 		}
 		for i in 1 ..< d.h {
-			y := i32(d.oy + f32(i) * z)
-			if y >= vp.y && y < vp.y + vp.h {
-				hline(max(x0, vp.x), y, min(x1, vp.x + vp.w) - max(x0, vp.x), gc)
+			y := snap(d.oy + f32(i) * z)
+			if y >= vy0 && y < vy1 {
+				draw_rect(max(x0, vx0), y, min(x1, vx1) - max(x0, vx0), t, gc)
 			}
 		}
 	}
@@ -171,45 +173,43 @@ render_canvas :: proc(vp: Rect) {
 	if opts.grid && opts.grid_w > 0 && opts.grid_h > 0 {
 		gc := Color{90, 170, 255, 150}
 		for gx := opts.grid_ox % opts.grid_w; gx <= d.w; gx += opts.grid_w {
-			x := i32(d.ox + f32(gx) * z)
-			vline(x, y0, y1 - y0, gc)
+			draw_rect(snap(d.ox + f32(gx) * z), y0, t, y1 - y0, gc)
 		}
 		for gy := opts.grid_oy % opts.grid_h; gy <= d.h; gy += opts.grid_h {
-			y := i32(d.oy + f32(gy) * z)
-			hline(x0, y, x1 - x0, gc)
+			draw_rect(x0, snap(d.oy + f32(gy) * z), x1 - x0, t, gc)
 		}
 	}
 	// symmetry guides
 	if opts.sym_guides {
 		sc := Color{255, 90, 200, 200}
 		if opts.sym_x {
-			vline(i32(d.ox + cw / 2), y0 - 4, y1 - y0 + 8, sc)
+			draw_rect(snap(d.ox + cw / 2), y0 - 4, t, y1 - y0 + 8, sc)
 		}
 		if opts.sym_y {
-			hline(x0 - 4, i32(d.oy + ch / 2), x1 - x0 + 8, sc)
+			draw_rect(x0 - 4, snap(d.oy + ch / 2), x1 - x0 + 8, t, sc)
 		}
 	}
 
 	// canvas border
-	outline_rect(Rect{x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2}, Color{10, 10, 14, 255})
+	draw_rect_outline({x0 - t, y0 - t, x1 - x0 + 2 * t, y1 - y0 + 2 * t}, Color{10, 10, 14, 255})
 
 	// selection outline (marching ants)
 	doc_rebuild_edges(d)
 	if len(d.sel_edges) > 0 {
 		phase := int(ui.time * 6)
-		zi := max(i32(math.ceil(z)), 1)
+		zl := max(z, t)
 		for e in d.sel_edges {
-			sx := i32(d.ox + f32(e.x) * z)
-			sy := i32(d.oy + f32(e.y) * z)
-			if sx > vp.x + vp.w || sy > vp.y + vp.h || sx + zi < vp.x || sy + zi < vp.y {
+			sx := snap(d.ox + f32(e.x) * z)
+			sy := snap(d.oy + f32(e.y) * z)
+			if sx > vx1 || sy > vy1 || sx + zl < vx0 || sy + zl < vy0 {
 				continue
 			}
 			on := ((int(e.x) + int(e.y) + phase) / 2) % 2 == 0
 			c := on ? Color{255, 255, 255, 255} : Color{0, 0, 0, 255}
 			if e.vert {
-				vline(sx, sy, zi, c)
+				draw_rect(sx, sy, t, zl, c)
 			} else {
-				hline(sx, sy, zi, c)
+				draw_rect(sx, sy, zl, t, c)
 			}
 		}
 	}

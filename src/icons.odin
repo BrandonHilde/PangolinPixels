@@ -1,5 +1,7 @@
 package pangolin
 
+import "core:math"
+
 // Icons are SVG files (assets/icons, a 24 x 24 grid drawn in white so they can be tinted), rasterised
 // at the window's physical resolution for each size they are drawn at.
 ICON_SIZE :: 12 // logical px: option bars, layer rows, menus
@@ -127,7 +129,7 @@ icons_build_atlas :: proc(px: int) -> Texture {
 
 // The atlas for icons drawn `size` logical px wide, rebuilt when the UI scale changes.
 icon_atlas :: proc(size: i32) -> (Texture, i32) {
-	px := size * i32(gfx.scale)
+	px := max(i32(math.round(f32(size) * gfx.scale)), 1)
 	a := icon_atlases[size]
 	if a.px != px || !tex_valid(a.tex) {
 		tex_destroy(&a.tex)

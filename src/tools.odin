@@ -53,8 +53,16 @@ eff_tool :: proc() -> Tool {
 	return cur_tool
 }
 
-screen_to_canvas :: proc(sx, sy: i32) -> IVec {
-	return IVec{int(math.floor((f32(sx) - doc.ox) / doc.zoom)), int(math.floor((f32(sy) - doc.oy) / doc.zoom))}
+// The pointer in logical units, without the rounding of ui.mx / ui.my: at a high UI scale one sprite
+// pixel can be smaller than one unit.
+pointer_pos :: proc() -> Vec2 {
+	return ui.ptr / ui.scale
+}
+
+// The sprite pixel under the pointer.
+pointer_to_canvas :: proc() -> IVec {
+	m := pointer_pos()
+	return IVec{int(math.floor((m.x - doc.ox) / doc.zoom)), int(math.floor((m.y - doc.oy) / doc.zoom))}
 }
 
 px_valid :: proc(p: IVec) -> bool {
@@ -278,8 +286,8 @@ begin_drag :: proc(btn: int, p: IVec) {
 		drag.active = false
 	case .Zoom:
 		drag.active = false
-		nz := zoom_step(doc.zoom, btn == 0 ? 1 : -1)
-		zoom_at(nz, f32(ui.mx), f32(ui.my))
+		m := pointer_pos()
+		zoom_at(zoom_step(btn == 0 ? 1 : -1), m.x, m.y)
 	}
 }
 
@@ -397,7 +405,7 @@ canvas_update :: proc(vp: Rect) {
 		view_fit(doc)
 	}
 	over := ui.layer == ui.input_layer && in_rect(vp, ui.mx, ui.my) && !files_dragging()
-	p := screen_to_canvas(ui.mx, ui.my)
+	p := pointer_to_canvas()
 	hover_px = p
 	hover_valid = over
 
@@ -408,7 +416,8 @@ canvas_update :: proc(vp: Rect) {
 		} else if ui.ctrl {
 			doc.oy += ui.wheel * 24
 		} else {
-			zoom_at(zoom_step(doc.zoom, ui.wheel > 0 ? 1 : -1), f32(ui.mx), f32(ui.my))
+			m := pointer_pos()
+			zoom_at(zoom_step(ui.wheel > 0 ? 1 : -1), m.x, m.y)
 		}
 	}
 	if over && ui.wheel_h != 0 {

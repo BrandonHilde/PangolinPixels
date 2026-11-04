@@ -79,7 +79,7 @@ prefs_load :: proc() {
 		}
 		switch key {
 		case "ui_scale":
-			ui_scale_pref = clamp(val, 0, 4)
+			ui_scale_pref = ui_scale_parse(val)
 		case "bg_mode":
 			bg_mode = clamp(val, 0, 4)
 		case "bg_custom":
