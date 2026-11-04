@@ -396,7 +396,7 @@ canvas_update :: proc(vp: Rect) {
 	if !doc.view_init {
 		view_fit(doc)
 	}
-	over := ui.layer == ui.input_layer && in_rect(vp, ui.mx, ui.my)
+	over := ui.layer == ui.input_layer && in_rect(vp, ui.mx, ui.my) && !files_dragging()
 	p := screen_to_canvas(ui.mx, ui.my)
 	hover_px = p
 	hover_valid = over

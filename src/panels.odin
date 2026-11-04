@@ -23,6 +23,7 @@ panels_init :: proc() {
 	oui_slot_register("filter_list", proc(r: Rect, _: int) {panel_filter_list(r)})
 	oui_slot_register("preview", proc(r: Rect, _: int) {panel_preview(r)})
 	oui_slot_register("timeline_grid", proc(r: Rect, _: int) {panel_timeline_grid(r)})
+	oui_slot_register("files_grid", proc(r: Rect, _: int) {panel_files_grid(r)})
 	oui_slot_register("canvas_bg", proc(r: Rect, _: int) {panel_canvas_bg(r)})
 	oui_slot_register("cursor_info", proc(r: Rect, _: int) {panel_cursor_info(r)})
 	oui_slot_register("groups_bar", proc(r: Rect, _: int) {panel_groups_bar(r)})
@@ -44,9 +45,7 @@ main_ui :: proc() {
 	oui.element(uictx, "center", "column", {id = "center"})
 	panel_tabs()
 	oui_slot("viewport", "viewport")
-	if show_timeline {
-		panel_timeline()
-	}
+	panel_timeline()
 	oui.end(uictx)
 	panel_right()
 	oui.end(uictx)
@@ -184,7 +183,8 @@ menu_build :: proc(idx: int) {
 		item("Transparency Checkers", cmd = .Toggle_Checks, checked = opts.show_checks)
 		popup_sep()
 		item("Canvas Mode", cmd = .Toggle_Canvas_Mode, checked = canvas_mode)
-		item("Timeline", cmd = .Toggle_Timeline, checked = show_timeline)
+		item("Timeline", cmd = .Toggle_Timeline, checked = bottom_mode == .Animation)
+		item("File Browser", cmd = .Toggle_Files, checked = bottom_mode == .Files)
 		item("Navigator", cmd = .Toggle_Preview, checked = show_preview)
 		item("Preferences...", cmd = .Preferences)
 	case 7:
@@ -247,7 +247,7 @@ panel_menubar :: proc() {
 // ---------------------------------------------------------------------------
 
 panel_tabs :: proc() {
-	oui.element(uictx, "tabs", "tabbar", {id = "tabs"})
+	tabs_rect = oui_rect(oui.element(uictx, "tabs", "tabbar", {id = "tabs"}))
 	defer oui.end(uictx)
 	close_idx := -1
 	switch_idx := -1
@@ -1064,11 +1064,34 @@ obadge_button :: proc(key: string, ic: Icon, plus: bool, tip: string, enabled :=
 	return n.clicked && enabled
 }
 
+// The panel under the canvas: a bar ending in the mode switch, and the timeline or file browser.
 panel_timeline :: proc() {
-	d := doc
-	oui.element(uictx, "timeline", "timeline", {id = "timeline"})
+	if bottom_mode == .Files do files_update()
+	oui.element(uictx, "timeline", "timeline", {id = "timeline", class = bottom_mode == .Hidden ? "collapsed" : ""})
 	defer oui.end(uictx)
 	oui.element(uictx, "bar", "row", {id = "timeline-bar"})
+	oui.element(uictx, "tools", "row", {id = "bar-tools"}) // clipped first when the window is narrow
+	switch bottom_mode {
+	case .Animation:
+		timeline_bar_controls()
+	case .Files:
+		files_bar_controls()
+	case .Hidden:
+	}
+	oui.end(uictx)
+	bottom_mode_switch()
+	oui.end(uictx)
+	switch bottom_mode {
+	case .Animation:
+		oui_slot("timeline-grid", "timeline_grid")
+	case .Files:
+		files_body()
+	case .Hidden:
+	}
+}
+
+timeline_bar_controls :: proc() {
+	d := doc
 	tb :: proc(key: string, ic: Icon, tip: string, enabled := true, lit := false) -> bool {
 		c, _ := oui_icon_button(key, ic, tip, {class = "tl-btn", enabled = enabled, lit = lit})
 		return c
@@ -1106,8 +1129,6 @@ panel_timeline :: proc() {
 	if obutton(fmt.tprintf("%d ms", d.frames[d.active_frame].duration), 64, "Frame duration (click to edit)", key = "duration") {
 		run_cmd(.Frame_Props)
 	}
-	oui.end(uictx)
-	oui_slot("timeline-grid", "timeline_grid")
 }
 
 tl_scroll_x, tl_scroll_y: i32

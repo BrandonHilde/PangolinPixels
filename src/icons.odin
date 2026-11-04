@@ -48,6 +48,10 @@ Icon :: enum {
 	Check,
 	Merge,
 	Canvas_Mode,
+	Folder,
+	Film,
+	Eye_Off,
+	Refresh,
 }
 
 ICON_SVG := [Icon]string {
@@ -93,6 +97,10 @@ ICON_SVG := [Icon]string {
 	.Check = #load("../assets/icons/check.svg", string),
 	.Merge = #load("../assets/icons/merge.svg", string),
 	.Canvas_Mode = #load("../assets/icons/canvas_mode.svg", string),
+	.Folder = #load("../assets/icons/folder.svg", string),
+	.Film = #load("../assets/icons/film.svg", string),
+	.Eye_Off = #load("../assets/icons/eye_off.svg", string),
+	.Refresh = #load("../assets/icons/refresh.svg", string),
 }
 
 @(private = "file")

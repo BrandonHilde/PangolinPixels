@@ -582,24 +582,30 @@ file_import_dialog :: proc(kind: Import_Kind) {
 	delete(p)
 }
 
-import_as_layer :: proc(path: string) {
+// Without `center` the image goes in the top left corner; with it, its middle lands on that pixel.
+import_as_layer :: proc(path: string, center: Maybe(IVec) = nil) {
 	pix, w, h, ok := load_image_pixels(path)
 	if !ok {
 		show_message("Import", "Cannot read image.")
 		return
 	}
 	defer delete(pix)
+	ox, oy := 0, 0
+	if c, has := center.?; has {
+		ox, oy = image_place(w, h, c)
+	}
 	history_push(doc)
 	l := layer_make(path_stem(path), len(doc.frames), doc.w * doc.h)
-	for y in 0 ..< min(h, doc.h) {
-		for x in 0 ..< min(w, doc.w) {
-			l.cels[doc.active_frame].pix[y * doc.w + x] = pix[y * w + x]
+	for y in max(-oy, 0) ..< min(h, doc.h - oy) {
+		for x in max(-ox, 0) ..< min(w, doc.w - ox) {
+			l.cels[doc.active_frame].pix[(y + oy) * doc.w + x + ox] = pix[y * w + x]
 		}
 	}
 	inject_at(&doc.layers, doc.active_layer + 1, l)
 	doc.active_layer += 1
 	doc_touch(doc)
-	set_status("Imported as layer")
+	cropped := ox < 0 || oy < 0 || ox + w > doc.w || oy + h > doc.h
+	set_status(cropped ? "Imported as layer (cropped to the canvas)" : "Imported as layer")
 }
 
 // Slice the image at `sheet_path` into frames of fw x fh.

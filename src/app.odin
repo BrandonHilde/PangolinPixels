@@ -62,7 +62,6 @@ play_tag: int = -1 // -1 = whole animation
 
 // UI toggles
 canvas_mode := false // Tab: hide the side panels, tabs, timeline and status bar, leaving only the top bars
-show_timeline := true
 show_preview := true
 preview_zoom := 0 // 0 = auto
 bg_mode := 0 // canvas background: 0 checker, 1 black, 2 white, 3 gray, 4 custom colour

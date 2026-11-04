@@ -216,6 +216,7 @@ main :: proc() {
 		oui_render()
 		dialogs_run()
 		popup_run()
+		files_drag_run()
 		tooltip_draw()
 		if shot_path != "" && frame_no == shot_frame {
 			gfx.screenshot = shot_path

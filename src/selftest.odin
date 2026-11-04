@@ -708,4 +708,86 @@ selftest_tool_groups :: proc() {
 	check(recent[0] == Color{77, 66, 55, 255}, "painting adds the colour to the recent ones")
 
 	tool_groups_default()
+
+	selftest_files()
+}
+
+@(private = "file")
+selftest_files :: proc() {
+	dir := "selftest_files"
+	os.remove_all(dir)
+	os.make_directory(dir)
+	defer os.remove_all(dir)
+	join :: proc(dir, name: string) -> string {
+		return fmt.tprintf("%s/%s", dir, name)
+	}
+
+	// --- the folder listing ---
+	green := Color{0, 255, 0, 255}
+	small := make([]Color, 4 * 2, context.temp_allocator)
+	slice.fill(small, green)
+	check(save_png(join(dir, "b.png"), small, 4, 2), "file browser: sample image written")
+	save_png(join(dir, "A.PNG"), small, 4, 2)
+	save_png(join(dir, ".hidden.png"), small, 4, 2)
+	write_file(join(dir, "notes.txt"), transmute([]u8)string("x"))
+	os.make_directory(join(dir, "sub"))
+	files_set_dir(dir)
+	check(len(files) == 3, "file browser lists images and folders only")
+	if len(files) == 3 {
+		check(files[0].is_dir && files[0].name == "sub", "file browser: folders come first")
+		check(files[1].name == "A.PNG" && files[2].name == "b.png", "file browser: names sort ignoring case")
+	}
+
+	check(files_parent("C:\\art\\walk") == "C:\\art", "parent folder")
+	check(files_parent("C:\\art") == "C:\\", "parent of a top folder is the drive")
+	check(files_parent("C:\\") == "", "a drive has no parent")
+	check(files_parent("/art") == "/" && files_parent("/") == "", "parent folders on unix paths")
+
+	// --- thumbnails ---
+	pix, w, h, iw, ih, ok := thumb_load(join(dir, "b.png"))
+	check(ok && w == 4 && h == 2 && iw == 4 && ih == 2 && pix[0] == green, "small images are their own thumbnail")
+	delete(pix)
+	big := make([]Color, 600 * 300, context.temp_allocator)
+	slice.fill(big, green)
+	save_png(join(dir, "big.png"), big, 600, 300)
+	pix, w, h, iw, ih, ok = thumb_load(join(dir, "big.png"))
+	check(ok && w == THUMB_MAX && h == THUMB_MAX / 2 && iw == 600 && ih == 300, "large images shrink, keeping their shape")
+	if ok do check(pix[0] == green, "shrinking keeps the colour")
+	delete(pix)
+	half := []Color{{255, 0, 0, 255}, {0, 0, 0, 0}, {255, 0, 0, 255}, {0, 0, 0, 0}}
+	shrunk, sw, sh := thumb_shrink(half, 2, 2, 1)
+	check(sw == 1 && sh == 1 && shrunk[0] == Color{255, 0, 0, 127}, "transparent pixels do not darken a thumbnail")
+	delete(shrunk)
+	pd := doc_new(8, 8, "p")
+	pd.layers[0].cels[0].pix[0] = green
+	write_file(join(dir, "p.pxl"), project_encode(pd))
+	doc_destroy(pd)
+	pix, w, h, iw, ih, ok = thumb_load(join(dir, "p.pxl"))
+	check(ok && w == 8 && h == 8 && pix[0] == green, "projects get a thumbnail")
+	delete(pix)
+	write_file(join(dir, "bad.png"), transmute([]u8)string("not an image"))
+	_, _, _, _, _, ok = thumb_load(join(dir, "bad.png"))
+	check(!ok, "unreadable images report failure")
+
+	// --- dropping onto the canvas ---
+	d := doc_new(16, 16, "drop")
+	append(&docs, d)
+	doc = d
+	layers := len(d.layers)
+	undo := len(d.undo)
+	import_as_layer(join(dir, "b.png"), IVec{8, 8})
+	check(len(d.layers) == layers + 1 && d.active_layer == layers, "a drop adds a layer above the active one")
+	check(len(d.undo) == undo + 1, "a drop can be undone")
+	check(name_str(&d.layers[d.active_layer].name) == "b", "the layer is named after the file")
+	check(cel_px(d, d.active_layer, 0, 6, 7) == green && cel_px(d, d.active_layer, 0, 9, 8) == green, "the image is centred on the drop point")
+	check(cel_px(d, d.active_layer, 0, 5, 7).a == 0 && cel_px(d, d.active_layer, 0, 10, 8).a == 0, "nothing lands outside the image")
+	import_as_layer(join(dir, "b.png"), IVec{0, 0})
+	check(cel_px(d, d.active_layer, 0, 0, 0) == green && cel_px(d, d.active_layer, 0, 1, 0) == green, "a drop at the edge is cropped by the canvas")
+	import_as_layer(join(dir, "b.png"), IVec{-100, -100})
+	check(cel_px(d, d.active_layer, 0, 0, 0) == green, "a drop beside the sprite still leaves part of it on the canvas")
+	import_as_layer(join(dir, "b.png"))
+	check(cel_px(d, d.active_layer, 0, 3, 1) == green && cel_px(d, d.active_layer, 0, 4, 1).a == 0, "the menu import still uses the top left corner")
+	files_clear()
+	delete(files_dir)
+	files_dir = ""
 }

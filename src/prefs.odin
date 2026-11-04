@@ -27,7 +27,8 @@ prefs_save :: proc() {
 	fmt.sbprintf(&sb, "pixel_grid=%d\n", b2i(opts.pixel_grid))
 	fmt.sbprintf(&sb, "sym_guides=%d\n", b2i(opts.sym_guides))
 	fmt.sbprintf(&sb, "show_checks=%d\n", b2i(opts.show_checks))
-	fmt.sbprintf(&sb, "timeline=%d\n", b2i(show_timeline))
+	fmt.sbprintf(&sb, "bottom_panel=%d\n", int(bottom_mode))
+	fmt.sbprintf(&sb, "files_dir=%s\n", files_dir)
 	fmt.sbprintf(&sb, "preview=%d\n", b2i(show_preview))
 	fmt.sbprintf(&sb, "grid_w=%d\n", opts.grid_w)
 	fmt.sbprintf(&sb, "grid_h=%d\n", opts.grid_h)
@@ -68,6 +69,10 @@ prefs_load :: proc() {
 			tool_groups_parse(sval)
 			continue
 		}
+		if key == "files_dir" {
+			files_dir = strings.clone(sval)
+			continue
+		}
 		val, vok := strconv.parse_int(sval)
 		if !vok {
 			continue
@@ -85,8 +90,10 @@ prefs_load :: proc() {
 			opts.sym_guides = val != 0
 		case "show_checks":
 			opts.show_checks = val != 0
-		case "timeline":
-			show_timeline = val != 0
+		case "timeline": // from before the bottom panel had a file browser
+			bottom_mode = val != 0 ? .Animation : .Hidden
+		case "bottom_panel":
+			bottom_mode = Bottom_Mode(clamp(val, 0, len(Bottom_Mode) - 1))
 		case "preview":
 			show_preview = val != 0
 		case "grid_w":

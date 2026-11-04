@@ -36,6 +36,9 @@ Drag image/project files onto the window to open them. `PangolinPixels --selftes
 - **Layers & animation**: unlimited layers (opacity, 9 blend modes, lock, visibility, merge, flatten), frames with
   per-frame duration, copy-on-write cels, tags (forward / reverse / ping-pong), onion skin (previous / next frame,
   opacity), playback. Drag a layer in the timeline to reorder it; right-click it for the layer menu.
+- **File browser**: the switch at the right of the timeline's bar shows the timeline, shows thumbnails of a folder's
+  images and projects, or hides the panel. Drag a thumbnail onto the canvas to add it as a layer where you drop it, or
+  onto the tab bar to open it as a new sprite (double-click does that too). Double-click a folder to go into it.
 - **Grid and snapping**: a custom grid (size and offset) that marquee selections and rectangle / ellipse shapes snap to
   in whole cells, line ends to grid crossings, and moves (drag or arrow keys) in whole cells while Snap to Grid is on
   (Ctrl+Shift+;). Snapping only applies while a tool is in use.

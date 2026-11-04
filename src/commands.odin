@@ -94,6 +94,7 @@ Cmd :: enum {
 	Cycle_Tile,
 	Toggle_Checks,
 	Toggle_Timeline,
+	Toggle_Files,
 	Toggle_Preview,
 	Toggle_Canvas_Mode,
 	Grid_Settings,
@@ -618,7 +619,9 @@ run_cmd :: proc(cmd: Cmd) {
 	case .Toggle_Checks:
 		opts.show_checks = !opts.show_checks
 	case .Toggle_Timeline:
-		show_timeline = !show_timeline
+		bottom_mode_set(bottom_mode == .Animation ? .Hidden : .Animation)
+	case .Toggle_Files:
+		bottom_mode_set(bottom_mode == .Files ? .Hidden : .Files)
 	case .Toggle_Preview:
 		show_preview = !show_preview
 	case .Toggle_Canvas_Mode:
