@@ -101,6 +101,7 @@ Cmd :: enum {
 	Grid_Settings,
 	Canvas_Bg,
 	Preferences,
+	UI_Scale,
 	// tools (must stay in the same order as `Tool`)
 	Tool_Pencil,
 	Tool_Eraser,
@@ -158,14 +159,18 @@ SHORTCUTS := [?]Shortcut {
 	{.Deselect, .D, true, false, false},
 	{.Deselect, .ESCAPE, false, false, false},
 	{.Invert_Sel, .I, true, false, false},
+	{.Layer_New, .N, true, true, false},
 	{.Layer_New, .N, false, true, false},
+	{.Layer_Dup, .J, true, false, false},
 	{.Layer_Merge, .E, true, false, false},
 	{.Frame_New, .N, false, false, true},
 	{.Play, .ENTER, false, false, false},
 	{.Frame_Prev, .COMMA, false, false, false},
 	{.Frame_Next, .PERIOD, false, false, false},
 	{.Frame_First, .HOME, false, false, false},
+	{.Frame_First, .COMMA, false, true, false},
 	{.Frame_Last, .END, false, false, false},
+	{.Frame_Last, .PERIOD, false, true, false},
 	{.Zoom_In, .EQUAL, false, false, false},
 	{.Zoom_In, .EQUAL, true, false, false},
 	{.Zoom_In, .KP_ADD, false, false, false},
@@ -179,7 +184,7 @@ SHORTCUTS := [?]Shortcut {
 	{.Zoom_8, .FOUR, true, false, false},
 	{.Zoom_16, .FIVE, true, false, false},
 	{.Toggle_Canvas_Mode, .TAB, false, false, false},
-	{.Toggle_Grid, .APOSTROPHE, true, false, false},
+	{.Toggle_Grid, .SEMICOLON, true, false, false},
 	{.Toggle_Snap, .SEMICOLON, true, true, false},
 	{.Toggle_Pixel_Grid, .APOSTROPHE, true, true, false},
 	{.Toggle_Onion, .O, false, false, true},
@@ -189,9 +194,9 @@ SHORTCUTS := [?]Shortcut {
 	{.Tool_Pencil, .B, false, false, false},
 	{.Tool_Eraser, .E, false, false, false},
 	{.Tool_Line, .L, false, false, false},
-	{.Tool_Rect, .U, false, false, false},
+	{.Tool_Rect, .R, false, false, false},
 	{.Tool_Ellipse, .O, false, false, false},
-	{.Tool_Curve, .C, false, false, false},
+	{.Tool_Curve, .P, false, false, false},
 	{.Tool_Bucket, .G, false, false, false},
 	{.Tool_Picker, .I, false, false, false},
 	{.Tool_Select_Rect, .M, false, false, false},
@@ -388,8 +393,10 @@ view_fit :: proc(d: ^Doc) {
 	if vp.w <= 0 || vp.h <= 0 {
 		return
 	}
-	zx := f32(vp.w - 40) / f32(d.w)
-	zy := f32(vp.h - 40) / f32(d.h)
+	// a small viewport (a very large UI scale) keeps its room for the sprite
+	margin := min(40, min(vp.w, vp.h) / 5)
+	zx := f32(vp.w - margin) / f32(d.w)
+	zy := f32(vp.h - margin) / f32(d.h)
 	z := min(zx, zy) * gfx.scale // screen pixels per sprite pixel
 	if z >= 1 {
 		z = math.floor(z)
@@ -616,7 +623,7 @@ run_cmd :: proc(cmd: Cmd) {
 		switch_set(.Grid, !opts.grid)
 	case .Toggle_Snap:
 		opts.snap = !opts.snap
-		set_status(opts.snap ? (opts.grid ? "Snap to grid on" : "Snap to grid on (shows with the grid, Ctrl+')") : "Snap to grid off")
+		set_status(opts.snap ? (opts.grid ? "Snap to grid on" : "Snap to grid on (shows with the grid, Ctrl+;)") : "Snap to grid off")
 	case .Toggle_Pixel_Grid:
 		opts.pixel_grid = !opts.pixel_grid
 	case .Toggle_Onion:
@@ -647,6 +654,8 @@ run_cmd :: proc(cmd: Cmd) {
 		dialog_open(.Canvas_Bg)
 	case .Preferences:
 		dialog_open(.Prefs)
+	case .UI_Scale:
+		dialog_open(.UI_Scale)
 
 	case .Tool_Pencil ..= .Tool_Zoom, .Ws_First ..= .Ws_Last:
 	case .Ws_Manage:

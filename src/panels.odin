@@ -14,7 +14,10 @@ FILTER_ADD_ID :: u32(0xF117E125)
 // ---------------------------------------------------------------------------
 
 panels_init :: proc() {
-	oui_slot_register("logo", proc(r: Rect, _: int) {logo_draw(r.x, r.y + (r.h - LOGO_SIZE) / 2, 1)})
+	oui_slot_register("logo", proc(r: Rect, _: int) {
+		logo_draw(r.x, r.y + (r.h - LOGO_SIZE) / 2, 1)
+		tip_area(r, "logo", {"Pangolin Pixels", "A pixel art and sprite animation editor. Help > About has the details."})
+	})
 	oui_slot_register("color_chips", proc(r: Rect, _: int) {panel_color_chips(r)})
 	oui_slot_register("color_picker", proc(r: Rect, _: int) {panel_color_picker(r)})
 	oui_slot_register("hex_field", proc(r: Rect, _: int) {panel_hex_field(r)})
@@ -117,6 +120,8 @@ menu_build :: proc(idx: int) {
 		item("Replace Color...", cmd = .Replace_Color)
 		popup_sep()
 		item("Convert to Pixel Art...", cmd = .Pixel_Art_Sprite)
+		popup_sep()
+		item("Preferences...", cmd = .Preferences)
 	case 2:
 		item("Canvas Size...", cmd = .Canvas_Size)
 		item("Scale Sprite...", cmd = .Scale_Sprite)
@@ -180,8 +185,8 @@ menu_build :: proc(idx: int) {
 		item("Snap to Grid", cmd = .Toggle_Snap, checked = opts.snap)
 		item("Grid Settings...", cmd = .Grid_Settings)
 		item("Onion Skin", cmd = .Toggle_Onion, checked = opts.onion)
-		item("Symmetry Horizontal", cmd = .Toggle_Sym_X, checked = opts.sym_x)
-		item("Symmetry Vertical", cmd = .Toggle_Sym_Y, checked = opts.sym_y)
+		item("Mirror Horizontal", cmd = .Toggle_Sym_X, checked = opts.sym_x)
+		item("Mirror Vertical", cmd = .Toggle_Sym_Y, checked = opts.sym_y)
 		item("Cycle Tiled Mode", cmd = .Cycle_Tile, checked = opts.tile != .Off)
 		item("Canvas Background...", cmd = .Canvas_Bg)
 		item("Transparency Checkers", cmd = .Toggle_Checks, checked = opts.show_checks)
@@ -190,12 +195,12 @@ menu_build :: proc(idx: int) {
 		item("Timeline", cmd = .Toggle_Timeline, checked = bottom_mode == .Animation)
 		item("File Browser", cmd = .Toggle_Files, checked = bottom_mode == .Files)
 		item("Navigator", cmd = .Toggle_Preview, checked = show_preview)
-		item("Preferences...", cmd = .Preferences)
+		item("UI Scale...", cmd = .UI_Scale)
 	case 7:
 		ws_refresh()
 		for e, i in ws_entries {
 			if i == len(WS_BUILTIN_NAMES) do popup_sep()
-			item(e.name, cmd = Cmd(int(Cmd.Ws_First) + i), checked = e.name == ws_current)
+			item(e.name, cmd = Cmd(int(Cmd.Ws_First) + i), checked = e.name == ws_current, tip = e.builtin >= 0 ? WS_BUILTIN_HELP[e.builtin] : "")
 		}
 		popup_sep()
 		item("Manage Workspaces...", cmd = .Ws_Manage)
@@ -219,6 +224,7 @@ panel_menubar :: proc() {
 		n := oui.button_begin(uictx, title, {class = is_open ? "menu-title open" : "menu-title"})
 		oui.label(uictx, "t", title)
 		oui.end(uictx)
+		oui_tip(n, menu_title_tip(title))
 		// menus drop from the bottom of the bar
 		r := oui_rect(n)
 		br := oui_rect(bar)
@@ -240,10 +246,10 @@ panel_menubar :: proc() {
 		}
 	}
 	oui.element_leaf(uictx, "spacer", "spacer")
-	if c, _ := oui_icon_button("canvas-mode", .Canvas_Mode, "Canvas mode (Tab)", {lit = canvas_mode, enabled = true}); c {
+	if c, _ := oui_icon_button("canvas-mode", .Canvas_Mode, cmd_tip("Canvas mode", .Toggle_Canvas_Mode), {lit = canvas_mode, enabled = true}); c {
 		run_cmd(.Toggle_Canvas_Mode)
 	}
-	oui.label(uictx, "doc", doc_display_name(doc), {id = "doc-name"})
+	oui_tip(oui.label(uictx, "doc", doc_display_name(doc), {id = "doc-name"}), {"Current sprite", doc_status(doc)})
 }
 
 // ---------------------------------------------------------------------------
@@ -258,16 +264,17 @@ panel_tabs :: proc() {
 	for d, i in docs {
 		active := d == doc
 		t := oui.button_begin(uictx, fmt.tprintf("tab%x", uintptr(d)), {class = active ? "tab active" : "tab"})
+		oui_tip(t, {"", fmt.tprintf("%s Click to switch to it, middle-click to close it.", doc_status(d))})
 		if active do oui.element_leaf(uictx, "accent", "tab-accent")
 		oui.label(uictx, "name", doc_display_name(d))
-		if c, _ := oui_icon_button("close", .Close, "", {class = "tab-close", enabled = true}); c {
+		if c, _ := oui_icon_button("close", .Close, {"Close sprite", "Close this sprite. If it has unsaved changes you are asked first."}, {class = "tab-close", enabled = true}); c {
 			close_idx = i
 		}
 		oui.end(uictx)
 		if t.pressed do switch_idx = i // a press on the tab itself, not its close button
 		if t.hovered && ui.pressed[2] do close_idx = i
 	}
-	if c, _ := oui_icon_button("new", .Plus, "New sprite", {id = "new-tab", enabled = true}); c {
+	if c, _ := oui_icon_button("new", .Plus, cmd_tip("New sprite", .New), {id = "new-tab", enabled = true}); c {
 		run_cmd(.New)
 	}
 	if close_idx >= 0 {
@@ -311,37 +318,42 @@ panel_toolbar :: proc() {
 	rem_g, rem_t := -1, -1
 	cur_group := current_group()
 	for &g, gi in tool_groups {
-		oui.element(uictx, fmt.tprintf("g%d", gi), "tool-group")
+		oui.element(uictx, fmt.tprintf("g%d", gi), "tool-group", {class = g.pen_eraser ? "eraser" : ""})
 		// header: the name on the left, the hotkey as a keycap on the right
 		// (click the keycap for options; right-click the header for rename / remove)
 		hdr := oui.element(uictx, "head", "group-head")
+		oui_tip(hdr, {group_title(&g), "A tool group: tools, switches, colors or dither patterns kept together. Right-click here to rename or remove it."})
 		oui.label(uictx, "title", group_title(&g), {class = "group-title"})
 		if g.own {
 			dot := oui.element_leaf(uictx, "own", "own-dot", {interactive = true})
-			oui_tip(dot, "This group keeps its own brush settings (click the hotkey for options)")
+			oui_tip(dot, {"Own brush settings", "This group keeps its own brush size, shape, pattern and ink, loaded when you pick one of its tools. Click the hotkey to change this."})
 		}
 		waiting := group_key_wait == gi
 		label := waiting ? "..." : (g.key == .KEY_NULL ? "-" : key_name(g.key))
 		kc := oui.button_begin(uictx, "key", {class = label == "-" ? "keycap none" : "keycap", checked = waiting})
 		oui.label(uictx, "t", label)
 		oui.end(uictx)
-		oui_tip(kc, "Group hotkey (click for options)")
+		oui_tip(kc, {"Group hotkey", "Press this key to pick the group's last tool, and again to step through its tools. In a color or pattern group it steps through those instead. Click for options."})
 		oui.end(uictx)
 		bid := make_id({}, fmt.tprintf("grpbadge%d", gi))
 		if kc.clicked {
 			popup_begin(bid, oui_rect(kc), 120)
-			popup_item("Assign hotkey...", 0)
-			popup_item("Rename...", 3)
+			popup_item("Assign hotkey...", 0, tip = "Choose the key for this group: press a letter or digit next. Esc cancels, Backspace removes the hotkey.")
+			popup_item("Rename...", 3, tip = "Give this tool group a different name.")
 			if len(g.colors) == 0 && len(g.patterns) == 0 {
-				popup_item("Own brush settings", 4, checked = g.own)
+				popup_item("Use for pen eraser", 2, checked = g.pen_eraser, tip = "The eraser end of a drawing pen uses this group's tool, which you pick here apart from the pen tip's. Only one group can do this.")
+				if !g.pen_eraser do popup_item("Own brush settings", 4, checked = g.own, tip = "Give this group its own brush size, shape, pattern and ink, loaded when you pick one of its tools.")
 			}
-			popup_item("Remove group", 1)
+			popup_item("Remove group", 1, tip = "Remove this tool group from the toolbar. Its tools stay available from their shortcuts and other groups.")
 		}
 		if ui.popup_result_id == bid {
 			switch ui.popup_result_val {
 			case 0:
 				group_key_wait = gi
 				set_statusf("Press a key for this tool group (Esc cancels, Backspace clears)")
+			case 2:
+				group_set_pen_eraser(gi)
+				set_status(g.pen_eraser ? "The pen's eraser end now uses this group's tool" : "The pen's eraser end erases again")
 			case 3:
 				group_rename_open(gi)
 			case 4:
@@ -357,8 +369,8 @@ panel_toolbar :: proc() {
 		hid := make_id({}, fmt.tprintf("grphdr%d", gi))
 		if hdr.hovered && ui.released[1] && !popup.open {
 			popup_begin(hid, Rect{ui.mx, ui.my, 1, 1}, 110)
-			popup_item("Rename...", 3)
-			popup_item("Remove group", 1)
+			popup_item("Rename...", 3, tip = "Give this tool group a different name.")
+			popup_item("Remove group", 1, tip = "Remove this tool group from the toolbar. Its tools stay available from their shortcuts and other groups.")
 		}
 		if ui.popup_result_id == hid {
 			if ui.popup_result_val == 3 {
@@ -373,19 +385,20 @@ panel_toolbar :: proc() {
 		is_patterns := len(g.patterns) > 0
 		oui.element(uictx, "items", "group-items", {class = is_patterns ? "patterns" : ""})
 		for tool, ti in g.tools {
-			lit := t == tool && cur_group == gi
+			// the pen-eraser group keeps its own selection, separate from the pen tip's tool
+			lit := g.pen_eraser ? g.last == tool : t == tool && cur_group == gi
 			if tool_is_toggle(tool) do lit = tool_toggle_on(tool)
-			clicked, bn := oui_icon_button(fmt.tprintf("t%d", int(tool)), TOOL_ICONS[tool], TOOL_NAMES[tool], {class = "tool", lit = lit, enabled = true, icon_lg = true})
+			clicked, bn := oui_icon_button(fmt.tprintf("t%d", int(tool)), TOOL_ICONS[tool], tool_tip(tool), {class = "tool", lit = lit, enabled = true, icon_lg = true})
 			if clicked {
 				if !tool_is_toggle(tool) do g.last = tool
-				select_tool_in_group(tool, gi)
+				if tool_is_toggle(tool) || !g.pen_eraser do select_tool_in_group(tool, gi)
 			} else if bn.hovered && ui.pressed[1] && !popup.open {
 				rem_g, rem_t = gi, ti
 			}
 		}
 		// patterns are listed one per row, the active one highlighted
 		for pat, pi in g.patterns {
-			if obutton(PATTERN_NAMES[pat], 0, "Dither pattern (right-click to remove)", true, pat == opts.pattern, key = fmt.tprintf("p%d", pi), class = "pattern-row") {
+			if obutton(PATTERN_NAMES[pat], 0, {"", fmt.tprintf("%s Right-click to take it out of this group.", PATTERN_HELP[pat])}, true, pat == opts.pattern, key = fmt.tprintf("p%d", pi), class = "pattern-row") {
 				opts.pattern = pat
 			}
 			if oui_last != nil && oui_last.hovered && ui.pressed[1] && !popup.open {
@@ -398,7 +411,7 @@ panel_toolbar :: proc() {
 			class := linked ? "color-chip linked" : (same ? "color-chip same" : "color-chip")
 			cn := oui.button_begin(uictx, fmt.tprintf("c%d", ci), {class = class, style = fmt.tprintf("background:#%02x%02x%02x", c.r, c.g, c.b)})
 			oui.end(uictx)
-			oui_tip(cn, color_hex(c))
+			oui_tip(cn, {color_hex(c), "Click to make this the foreground color and edit it with the color picker. Right-click to take it out of this group."})
 			if cn.clicked {
 				color_link_set(gi, ci)
 			} else if cn.hovered && ui.pressed[1] && !popup.open {
@@ -407,7 +420,7 @@ panel_toolbar :: proc() {
 		}
 		can_add := is_colors ? len(g.colors) < MAX_GROUP_COLORS : (is_patterns ? len(g.patterns) < len(Pattern) : len(g.tools) < len(Tool))
 		if can_add {
-			tip := "Add tools, switches, colours or dither patterns to this group (right-click an item to remove it)"
+			tip := Tip{"Add to group", "Add a tool, switch, color or dither pattern to this group. A group holds only one of those kinds. To take one out again, right-click it."}
 			pid := make_id({}, fmt.tprintf("grpadd%d", gi))
 			add_clicked, add_node := oui_icon_button("add", .Plus, tip, {class = "tool quiet", enabled = true, icon_lg = true})
 			if add_clicked {
@@ -417,17 +430,18 @@ panel_toolbar :: proc() {
 				if !is_colors && !is_patterns {
 					for tool in Tool {
 						if !tool_group_has(&g, tool) {
-							popup_item_icon(TOOL_NAMES[tool], int(tool), TOOL_ICONS[tool])
+							popup_item_icon(TOOL_NAMES[tool], int(tool), TOOL_ICONS[tool], TOOL_HELP[tool])
 						}
 					}
 					any_section = true
 				}
 				if !is_tools && !is_patterns {
 					if any_section do popup_sep()
-					popup_item_swatch("Foreground colour", 100, fg)
-					popup_item("All palette colours", 101)
+					popup_item_swatch("Foreground color", 100, fg)
+					popup.items[len(popup.items) - 1].tip = "Add the foreground color to this group."
+					popup_item("All palette colors", 101, tip = "Add all the colors of the current palette to this group.")
 					for p in Palette_Preset {
-						popup_item_palette(PALETTE_PRESET_NAMES[p], 200 + int(p), p)
+						popup_item_palette(PALETTE_PRESET_NAMES[p], 200 + int(p), palette_preset(p), "Add the colors of this palette to this group.")
 					}
 					any_section = true
 				}
@@ -436,6 +450,7 @@ panel_toolbar :: proc() {
 					for pat in Pattern {
 						if !pattern_in(g.patterns[:], pat) {
 							popup_item_half(PATTERN_NAMES[pat], 300 + int(pat))
+							popup.items[len(popup.items) - 1].tip = PATTERN_HELP[pat]
 						}
 					}
 				}
@@ -484,7 +499,7 @@ panel_toolbar :: proc() {
 		}
 	}
 	if len(tool_groups) < MAX_TOOL_GROUPS {
-		if obutton("+ New Group", 0, "Add an empty tool group", id = "new-group") {
+		if obutton("+ New Group", 0, {"", "Add an empty tool group below the others."}, id = "new-group") {
 			append(&tool_groups, Tool_Group{})
 		}
 	}
@@ -508,8 +523,9 @@ panel_color_chips :: proc(r: Rect) {
 	chip(bgr, bg, ui_hover(bgr) && !ui_hover(fgr) ? WHITE : C_RING_HI)
 	draw_shadow(f32(fgr.x), f32(fgr.y + 1), 24, 24, 4, 5, Color{0, 0, 0, 140})
 	chip(fgr, fg, WHITE)
+	tip_area(fgr, "fgchip", {"Foreground color", "What the left mouse button draws with. Change it in the Color panel on the right."})
 	if ui_hover(bgr) && !ui_hover(fgr) {
-		tooltip_hover(make_id(bgr, "bgchip"), "Background colour (click to swap)")
+		tooltip_hover(make_id(bgr, "bgchip"), {"Background color", "What the right mouse button draws with. Click to swap it with the foreground color (X)."})
 		if ui.pressed[0] {
 			run_cmd(.Swap_Colors)
 		}
@@ -537,29 +553,35 @@ panel_options :: proc() {
 	t := eff_tool()
 
 	size_slider :: proc() {
-		oslider("Size", 80, &opts.brush_size, 1, 64, "Brush size ([ and ])")
+		oslider("Size", 80, &opts.brush_size, 1, 64, {"Brush size ([ and ])", "How wide the brush is, in sprite pixels."})
 		oui.element(uictx, "shape", "button-group")
-		if c, _ := oui_icon_button("square", .Frame, "Square brush", {lit = !opts.brush_round, enabled = true}); c {
+		if c, _ := oui_icon_button("square", .Frame, {"Square brush", "A square brush tip, which keeps edges straight."}, {lit = !opts.brush_round, enabled = true}); c {
 			opts.brush_round = false
 		}
-		if c, _ := oui_icon_button("round", .Ellipse, "Round brush", {lit = opts.brush_round, enabled = true}); c {
+		if c, _ := oui_icon_button("round", .Ellipse, {"Round brush", "A round brush tip, which is easier on the eye at larger sizes."}, {lit = opts.brush_round, enabled = true}); c {
 			opts.brush_round = true
 		}
 		oui.end(uictx)
 	}
 	ink_pattern :: proc() {
-		if nv, ch := ocombo("pattern", 84, pattern_names(), int(opts.pattern), "Pattern / dither"); ch {
+		if nv, ch := ocombo("pattern", 84, pattern_names(), int(opts.pattern), {"Pattern", "Which pixels the brush paints: all of them, or a repeating dither pattern. Patterns keep to the sprite's pixel grid, so strokes line up."}); ch {
 			opts.pattern = Pattern(nv)
 		}
-		if nv, ch := ocombo("ink", 74, INK_NAMES[:], int(opts.ink), "Ink mode"); ch {
+		if nv, ch := ocombo("ink", 74, INK_NAMES[:], int(opts.ink), {"Ink", "How paint meets the pixels: Normal blends by the color's alpha, Replace overwrites them, alpha included, and Lock A paints only on what is already drawn."}); ch {
 			opts.ink = Ink(nv)
 		}
 	}
 	sel_modes :: proc() {
 		labels := [?]string{"New", "Add", "Sub", "And"}
+		tips := [?]Tip {
+			{"New selection", "A new selection replaces the old one."},
+			{"Add to selection", "New selections join the old one. Holding Shift does this with any mode."},
+			{"Subtract from selection", "New selections are cut out of the old one. Holding Alt does this with any mode."},
+			{"Intersect with selection", "Only the overlap with the old selection is kept. Holding Shift+Alt does this with any mode."},
+		}
 		oui.element(uictx, "sel-mode", "button-group")
 		for l, i in labels {
-			if obutton(l, 28, "", true, int(opts.sel_mode) == i) {
+			if obutton(l, 28, tips[i], true, int(opts.sel_mode) == i) {
 				opts.sel_mode = Sel_Mode(i)
 			}
 		}
@@ -572,7 +594,7 @@ panel_options :: proc() {
 	case .Grid, .Symmetry, .Tiling, .Onion:
 	case .Pencil:
 		size_slider()
-		ocheck("Pixel-perfect", &opts.pixel_perf, "Remove L-shaped corners while drawing")
+		ocheck("Pixel-perfect", &opts.pixel_perf, {"", "Remove the extra pixel at L-shaped corners while drawing, so a one pixel line stays clean."})
 		ink_pattern()
 	case .Eraser:
 		size_slider()
@@ -583,7 +605,7 @@ panel_options :: proc() {
 		ohint("Shift: snap angle")
 	case .Rect, .Ellipse:
 		size_slider()
-		ocheck("Filled", &opts.fill_shape)
+		ocheck("Filled", &opts.fill_shape, {"", "Fill the shape with the color. Off draws only its outline, as wide as the brush."})
 		ink_pattern()
 		ohint("Shift: square   Ctrl: from center")
 	case .Curve:
@@ -592,15 +614,15 @@ panel_options :: proc() {
 		ohint("Drag a line, then drag the handles. Enter: apply   Esc: cancel")
 	case .Spray:
 		size_slider()
-		oslider("Density", 90, &opts.spray_dens, 1, 100)
+		oslider("Density", 90, &opts.spray_dens, 1, 100, {"Spray density", "How many dots each moment of spraying scatters. The brush size sets how far they spread."})
 		ink_pattern()
 	case .Bucket:
-		oslider("Tolerance", 100, &opts.tolerance, 0, 255)
-		ocheck("Contiguous", &opts.contiguous)
+		oslider("Tolerance", 100, &opts.tolerance, 0, 255, {"Tolerance", "How far a color may be from the one you click and still be filled. 0 takes only exact matches."})
+		ocheck("Contiguous", &opts.contiguous, {"", "On: fill only pixels connected to the one you click. Off: fill every matching pixel on the layer."})
 		ink_pattern()
 	case .Wand:
-		oslider("Tolerance", 100, &opts.tolerance, 0, 255)
-		ocheck("Contiguous", &opts.contiguous)
+		oslider("Tolerance", 100, &opts.tolerance, 0, 255, {"Tolerance", "How far a color may be from the one you click and still be selected. 0 takes only exact matches."})
+		ocheck("Contiguous", &opts.contiguous, {"", "On: select only pixels connected to the one you click. Off: select every matching pixel on the layer."})
 		sel_modes()
 	case .Select_Rect, .Select_Ellipse, .Lasso:
 		sel_modes()
@@ -618,30 +640,30 @@ panel_options :: proc() {
 	// global toggles on the right
 	oui.element_leaf(uictx, "spacer", "spacer")
 	oui_slot("canvas-bg", "canvas_bg")
-	if c, _ := oui_icon_button("sym-x", .Sym_X, "Mirror left / right (Shift+X)", {lit = opts.sym_x, enabled = true}); c {
+	if c, _ := oui_icon_button("sym-x", .Sym_X, cmd_tip("Mirror Horizontal", .Toggle_Sym_X), {lit = opts.sym_x, enabled = true}); c {
 		run_cmd(.Toggle_Sym_X)
 	}
-	if c, _ := oui_icon_button("sym-y", .Sym_Y, "Mirror top / bottom (Shift+Y)", {lit = opts.sym_y, enabled = true}); c {
+	if c, _ := oui_icon_button("sym-y", .Sym_Y, cmd_tip("Mirror Vertical", .Toggle_Sym_Y), {lit = opts.sym_y, enabled = true}); c {
 		run_cmd(.Toggle_Sym_Y)
 	}
-	if nv, ch := ocombo("tile", 76, TILE_NAMES[:], int(opts.tile), "Tiled mode (Shift+T)"); ch {
+	if nv, ch := ocombo("tile", 76, TILE_NAMES[:], int(opts.tile), {"Tiled mode (Shift+T)", "Repeat the sprite around the canvas, across or down or both, and wrap drawing across its edges. For seamless tiles."}); ch {
 		opts.tile = Tile_Mode(nv)
 		switch_changed(.Tiling)
 	}
-	if c, _ := oui_icon_button("onion", .Onion, "Onion skin (Alt+O)", {lit = opts.onion, enabled = true}); c {
+	if c, _ := oui_icon_button("onion", .Onion, cmd_tip("Onion skin", .Toggle_Onion), {lit = opts.onion, enabled = true}); c {
 		run_cmd(.Toggle_Onion)
 	}
-	if c, _ := oui_icon_button("pixel-grid", .Pixel_Grid, "Show pixel borders when zoomed in (Ctrl+Shift+')", {lit = opts.pixel_grid, enabled = true}); c {
+	if c, _ := oui_icon_button("pixel-grid", .Pixel_Grid, cmd_tip("Pixel grid", .Toggle_Pixel_Grid), {lit = opts.pixel_grid, enabled = true}); c {
 		run_cmd(.Toggle_Pixel_Grid)
 	}
-	if c, _ := oui_icon_button("grid", .Grid, "Show custom grid (Ctrl+')", {lit = opts.grid, enabled = true}); c {
+	if c, _ := oui_icon_button("grid", .Grid, cmd_tip("Grid", .Toggle_Grid), {lit = opts.grid, enabled = true}); c {
 		run_cmd(.Toggle_Grid)
 	}
 }
 
 // The canvas background swatch in the options bar: checkers or the solid colour.
 panel_canvas_bg :: proc(r: Rect) {
-	clicked, _, hover := button_behavior(make_id(r, "canvasbg"), r, "Canvas background color")
+	clicked, _, hover := button_behavior(make_id(r, "canvasbg"), r, {"Canvas background", cmd_help(.Canvas_Bg)})
 	clip_begin(r)
 	if bg_mode == 0 {
 		draw_checker(r, 3)
@@ -674,9 +696,9 @@ drag_area :: proc(r: Rect, id: u32) -> (active: bool, fx, fy: f32) {
 hex_buf: Name
 
 // Section heading: a dim caption with a hairline running to the right edge.
-osection :: proc(key, title: string) {
+osection :: proc(key, title: string, tip := Tip{}) {
 	oui.element(uictx, key, "section-head")
-	oui.label(uictx, "t", title)
+	oui_tip(oui.label(uictx, "t", title), tip)
 	oui.element_leaf(uictx, "line", "section-line")
 	oui.end(uictx)
 }
@@ -691,49 +713,50 @@ panel_right :: proc() {
 	defer oui.end(uictx)
 
 	// --- colour picker ---------------------------------------------------
-	osection("color-head", color_linked() != nil ? "Color - editing toolbar colour" : "Color")
+	osection("color-head", color_linked() != nil ? "Color - editing toolbar color" : "Color", {"Color", "The color you draw with. While a toolbar color is picked, edits here change that color in its group too."})
 	oui_slot("picker", "color_picker")
 	oui.element(uictx, "color-row", "row", {id = "color-row"})
-	oui.element_leaf(uictx, "fg", "color-chip", {id = "fg-chip", style = fmt.tprintf("background:#%02x%02x%02x", fg.r, fg.g, fg.b)})
-	if oswatch_button("bg", bg, "Background colour (click to swap)") do run_cmd(.Swap_Colors)
-	if c, _ := oui_icon_button("swap", .Swap, "Swap colors (X)", {id = "swap-colors", enabled = true}); c {
+	oui_tip(oui.element_leaf(uictx, "fg", "color-chip", {id = "fg-chip", style = fmt.tprintf("background:#%02x%02x%02x", fg.r, fg.g, fg.b), interactive = true}), {"Foreground color", "What the left mouse button draws with."})
+	if oswatch_button("bg", bg, {"Background color", "What the right mouse button draws with. Click to swap it with the foreground color."}) do run_cmd(.Swap_Colors)
+	if c, _ := oui_icon_button("swap", .Swap, cmd_tip("Swap colors", .Swap_Colors), {id = "swap-colors", enabled = true}); c {
 		run_cmd(.Swap_Colors)
 	}
 	oui_slot("hex", "hex_field")
-	otext("alpha", fmt.tprintf("A %d", fg.a), "dim")
+	otext("alpha", fmt.tprintf("A %d", fg.a), "dim", {"Alpha", "How solid the foreground color is, from 0 (see-through) to 255. Set it with the strip on the right of the picker."})
 	oui.end(uictx)
 	rgb := [3]int{int(fg.r), int(fg.g), int(fg.b)}
 	names := [3]string{"R", "G", "B"}
+	rgb_tips := [3]Tip{{"Red", "How much red is in the foreground color."}, {"Green", "How much green is in the foreground color."}, {"Blue", "How much blue is in the foreground color."}}
 	classes := [3]string{"wide ch-r", "wide ch-g", "wide ch-b"}
 	for i in 0 ..< 3 {
-		if oslider(names[i], 0, &rgb[i], 0, 255, class = classes[i]) {
+		if oslider(names[i], 0, &rgb[i], 0, 255, rgb_tips[i], class = classes[i]) {
 			picker_set_fg(Color{u8(rgb[0]), u8(rgb[1]), u8(rgb[2]), fg.a})
 		}
 	}
 
 	// --- palette ---------------------------------------------------------
 	oui.element(uictx, "palette-head", "row", {id = "palette-head", class = "panel-head"})
-	otext("t", "Palette", "dim")
+	otext("t", "Palette", "dim", {"Palette", "This sprite's own set of colors, saved with it. Click a swatch to draw with it, right-click for the background color."})
 	oui.element_leaf(uictx, "spacer", "spacer")
-	if obutton("Presets", 50, "Load a palette preset") {
+	if obutton("Presets", 50, {"", "Replace this sprite's palette with a ready-made one."}) {
 		r := oui_rect(oui_last)
 		popup_begin(PALETTE_PRESET_ID, r, 120)
 		for p in Palette_Preset {
-			popup_item(PALETTE_PRESET_NAMES[p], int(p))
+			popup_item(PALETTE_PRESET_NAMES[p], int(p), tip = "Replace this sprite's palette with this one.")
 		}
 	}
-	if c, _ := oui_icon_button("replace", .Pencil, "Replace selected swatch with foreground", {enabled = len(d.palette) > 0}); c {
+	if c, _ := oui_icon_button("replace", .Pencil, {"Replace swatch", "Change the selected swatch to the foreground color."}, {enabled = len(d.palette) > 0}); c {
 		if d.pal_sel >= 0 && d.pal_sel < len(d.palette) {
 			d.palette[d.pal_sel] = Color{fg.r, fg.g, fg.b, 255}
 			d.modified = true
 		}
 	}
-	if c, _ := oui_icon_button("add", .Plus, "Add foreground colour to palette", {enabled = true}); c {
+	if c, _ := oui_icon_button("add", .Plus, {"Add swatch", "Add the foreground color to the end of the palette."}, {enabled = true}); c {
 		append(&d.palette, Color{fg.r, fg.g, fg.b, 255})
 		d.pal_sel = len(d.palette) - 1
 		d.modified = true
 	}
-	if c, _ := oui_icon_button("remove", .Minus, "Remove selected swatch", {enabled = len(d.palette) > 1}); c {
+	if c, _ := oui_icon_button("remove", .Minus, {"Remove swatch", "Take the selected swatch out of the palette. What you have drawn is not changed."}, {enabled = len(d.palette) > 1}); c {
 		if d.pal_sel >= 0 && d.pal_sel < len(d.palette) {
 			ordered_remove(&d.palette, d.pal_sel)
 			d.pal_sel = clamp(d.pal_sel, 0, len(d.palette) - 1)
@@ -750,18 +773,45 @@ panel_right :: proc() {
 	rows := clamp(i32((len(d.palette) + int(cols) - 1) / int(cols)), 1, PAL_MAX_ROWS)
 	oui_slot("palette", "palette", style = fmt.tprintf("height:%dpx", rows * PAL_CELL + 4))
 	oui.element(uictx, "recent-row", "row", {id = "recent-row"})
-	otext("t", "Recent", "dim")
+	otext("t", "Recent", "dim", {"Recent colors", "The colors you painted with last, newest first."})
 	oui_slot("recent", "recent")
+	oui.end(uictx)
+
+	// --- layer -----------------------------------------------------------
+	osection("layer-head", "Layer", {"Current layer", "How the current layer mixes with the ones below. Pick the layer in the timeline."})
+	l := &d.layers[d.active_layer]
+	oui.element(uictx, "layer-props", "row", {id = "layer-props"})
+	if nv, ch := ocombo("blend", 92, blend_names_slice(), int(l.blend), LAYER_BLEND_TIP); ch {
+		history_push(d)
+		l.blend = Blend(nv)
+		doc_touch(d)
+	}
+	op := opacity_percent(l.opacity)
+	// one undo step per drag or wheel gesture, taken before the first change and dropped if nothing changed
+	@(static) op_pushed, op_changed: bool
+	if on := oui.find_node(uictx.build_parent, "s:Opacity"); on != nil && on.hovered && (ui.pressed[0] || ui.wheel != 0) && !op_pushed {
+		history_push(d)
+		op_pushed, op_changed = true, false
+	}
+	if oslider("Opacity", 0, &op, 0, 100, LAYER_OPACITY_TIP, "%", class = "wide") {
+		l.opacity = opacity_from_percent(op)
+		op_changed = true
+		doc_touch(d)
+	}
+	if op_pushed && !ui.down[0] && ui.wheel == 0 {
+		if !op_changed do history_discard(d)
+		op_pushed = false
+	}
 	oui.end(uictx)
 
 	// --- filters ---------------------------------------------------------
 	oui.element(uictx, "filters-head", "row", {id = "filters-head", class = "panel-head"})
-	otext("t", "Filters", "dim")
+	otext("t", "Filters", "dim", {"Layer filters", "Effects on the current layer, applied from the top down. They don't change its pixels until you merge or flatten it."})
 	oui.element_leaf(uictx, "spacer", "spacer")
-	if obutton("Add Filter", 64, "Add a filter to the current layer") {
+	if obutton("Add Filter", 64, {"", "Add a filter to the current layer. Exports show it, and merging makes it permanent."}) {
 		popup_begin(FILTER_ADD_ID, oui_rect(oui_last), 100)
 		for k in Filter_Kind {
-			popup_item(FILTER_INFO[k].name, int(k))
+			popup_item(FILTER_INFO[k].name, int(k), tip = FILTER_HELP[k])
 		}
 	}
 	oui.end(uictx)
@@ -777,7 +827,7 @@ panel_right :: proc() {
 
 	// --- preview ---------------------------------------------------------
 	if show_preview {
-		osection("preview-head", "Navigator")
+		osection("preview-head", "Navigator", {"Navigator", "The whole sprite in small. The marked box is the part the canvas shows."})
 		oui_slot("preview", "preview")
 	}
 }
@@ -790,6 +840,7 @@ panel_color_picker :: proc(r: Rect) {
 	draw_gradient(f32(sv.x), f32(sv.y), f32(sv.w), f32(sv.h), WHITE, hsv_to_rgb(fg_h, 1, 1), false)
 	draw_gradient(f32(sv.x), f32(sv.y), f32(sv.w), f32(sv.h), Color{0, 0, 0, 0}, Color{0, 0, 0, 255})
 	outline_rect(sv, C_RING_HI)
+	tip_area(sv, "sv", {"Saturation and brightness", "Click or drag to set the foreground color: left to right is saturation, top to bottom is brightness."})
 	if act, fx, fy := drag_area(sv, make_id(sv, "sv")); act {
 		picker_set_fg_hsv(fg_h, fx, 1 - fy, fg.a)
 	}
@@ -808,6 +859,7 @@ panel_color_picker :: proc(r: Rect) {
 		draw_gradient(f32(hue.x), f32(hue.y + i32(i) * seg_h), f32(hue.w), f32(seg_h + 1), c0, c1)
 	}
 	outline_rect(hue, C_RING_HI)
+	tip_area(hue, "hue", {"Hue", "Click or drag to pick the kind of color."})
 	if act, _, fy := drag_area(hue, make_id(hue, "hue")); act {
 		picker_set_fg_hsv(fy * 359.9, fg_s, fg_v, fg.a)
 	}
@@ -816,6 +868,7 @@ panel_color_picker :: proc(r: Rect) {
 	draw_checker(alp, 3)
 	draw_gradient(f32(alp.x), f32(alp.y), f32(alp.w), f32(alp.h), Color{fg.r, fg.g, fg.b, 0}, Color{fg.r, fg.g, fg.b, 255})
 	outline_rect(alp, C_RING_HI)
+	tip_area(alp, "alpha", {"Alpha", "Click or drag to set how solid the foreground color is."})
 	if act, _, fy := drag_area(alp, make_id(alp, "alpha")); act {
 		picker_set_fg(Color{fg.r, fg.g, fg.b, u8(fy * 255 + 0.5)})
 	}
@@ -836,7 +889,7 @@ panel_hex_field :: proc(hr: Rect) {
 	if ui.focus_id != hid {
 		name_set(&hex_buf, color_hex(fg))
 	}
-	if ch, sub := text_field(hr, &hex_buf, "Hex colour (RRGGBB or RRGGBBAA)"); ch || sub {
+	if ch, sub := text_field(hr, &hex_buf, {"Hex color", "The foreground color as a hex code. Type RRGGBB, or RRGGBBAA to include alpha."}); ch || sub {
 		if c, ok := parse_hex(name_str(&hex_buf)); ok {
 			picker_set_fg(c)
 		}
@@ -867,7 +920,7 @@ panel_palette :: proc(pal: Rect) {
 			draw_rrect_outline(f32(sr.x - 1), f32(sr.y - 1), f32(sr.w), f32(sr.h), 3, C_ACCENT)
 		}
 		if ui_hover(sr) && ui_hover(pal) {
-			tooltip_hover(make_id(sr, "sw"), color_hex(c))
+			tooltip_hover(make_id(sr, "sw"), {color_hex(c), "Click to make this the foreground color, right-click for the background color."})
 			if ui.pressed[0] {
 				set_fg(c)
 				d.pal_sel = i
@@ -890,7 +943,7 @@ panel_recent :: proc(r: Rect) {
 		draw_rrect(f32(sr.x), f32(sr.y), 12, 12, 2, c)
 		draw_rrect_outline(f32(sr.x), f32(sr.y), 12, 12, 2, color_eq(c, fg) ? WHITE : C_RING_HI)
 		if ui_hover(sr) {
-			tooltip_hover(make_id(sr, "rc"), color_hex(c))
+			tooltip_hover(make_id(sr, "rc"), {color_hex(c), "Click to make this the foreground color, right-click for the background color."})
 			if ui.pressed[0] do set_fg(c)
 			if ui.pressed[1] do bg = c
 		}
@@ -934,7 +987,7 @@ panel_preview :: proc(r: Rect) {
 		d.oy = f32(vp.y) + f32(vp.h) / 2 - py * d.zoom
 		ui.cursor = .RESIZE_ALL
 	} else if ui_hover(r) {
-		tooltip_hover(make_id(r, "navtip"), "Click or drag to move the view")
+		tooltip_hover(make_id(r, "navtip"), {"Navigator", "Click or drag to move the view to that part of the sprite."})
 	}
 }
 
@@ -953,6 +1006,7 @@ panel_filter_list :: proc(list: Rect) {
 	ctl_well(list)
 	if len(layer.filters) == 0 {
 		text_clipped(Rect{list.x + 6, list.y, list.w - 6, list.h}, "No filters on this layer", C_TEXT_DIM)
+		tip_area(list, "filters-empty", {"Layer filters", "Effects on the current layer. Use Add Filter above to add one."})
 		return
 	}
 
@@ -988,22 +1042,24 @@ panel_filter_list :: proc(list: Rect) {
 		}
 		hline(row.x, cy + h - 1, row.w, C_RING)
 		eye := Rect{row.x + 2, cy + 2, 16, 14}
-		if icon_button(eye, .Eye, f.enabled ? "Disable filter" : "Enable filter", f.enabled) && ui_hover(inner) {
+		if icon_button(eye, .Eye, {"Filter on or off", "Turn this filter off to see the layer without it, or on again. It stays in the list."}, f.enabled) && ui_hover(inner) {
 			act_toggle = i
 		}
 		bx := row.x + row.w - 17
-		if icon_button(Rect{bx, cy + 2, 15, 14}, .Close, "Remove filter") && ui_hover(inner) {
+		if icon_button(Rect{bx, cy + 2, 15, 14}, .Close, {"Remove filter", "Take this filter off the layer."}) && ui_hover(inner) {
 			act_del = i
 		}
 		bx -= 16
-		if icon_button(Rect{bx, cy + 2, 15, 14}, .Down, "Move filter down (applied later)", false, i < n - 1) && ui_hover(inner) {
+		if icon_button(Rect{bx, cy + 2, 15, 14}, .Down, {"Move filter down", "Apply this filter after the one below it. The order can change the result."}, false, i < n - 1) && ui_hover(inner) {
 			act_down = i
 		}
 		bx -= 16
-		if icon_button(Rect{bx, cy + 2, 15, 14}, .Up, "Move filter up (applied earlier)", false, i > 0) && ui_hover(inner) {
+		if icon_button(Rect{bx, cy + 2, 15, 14}, .Up, {"Move filter up", "Apply this filter before the one above it. The order can change the result."}, false, i > 0) && ui_hover(inner) {
 			act_up = i
 		}
-		text_clipped(Rect{eye.x + eye.w + 5, cy + 2, bx - eye.x - eye.w - 7, 14}, info.name, f.enabled ? C_TEXT : C_TEXT_DIM)
+		name_r := Rect{eye.x + eye.w + 5, cy + 2, bx - eye.x - eye.w - 7, 14}
+		text_clipped(name_r, info.name, f.enabled ? C_TEXT : C_TEXT_DIM)
+		if ui_hover(inner) do tip_area(name_r, "filter-name", {info.name, FILTER_HELP[f.kind]})
 		if info.has_param {
 			sr := Rect{row.x + 3, cy + 18, row.w - 6, 13}
 			if ui_hover(sr) && ui_hover(inner) {
@@ -1015,7 +1071,7 @@ panel_filter_list :: proc(list: Rect) {
 					filter_drag_changed = false
 				}
 			}
-			if slider(sr, &f.amount, info.lo, info.hi, info.param) {
+			if slider(sr, &f.amount, info.lo, info.hi, info.param, {info.name, FILTER_HELP[f.kind]}) {
 				filter_drag_changed = true
 				doc_touch(d)
 			}
@@ -1059,7 +1115,7 @@ panel_filter_list :: proc(list: Rect) {
 // ---------------------------------------------------------------------------
 
 // An icon button with a small + or - badge (new layer, delete frame ...).
-obadge_button :: proc(key: string, ic: Icon, plus: bool, tip: string, enabled := true) -> bool {
+obadge_button :: proc(key: string, ic: Icon, plus: bool, tip: Tip, enabled := true) -> bool {
 	n := oui.button_begin(uictx, key, {class = "icon-btn tl-btn", disabled = !enabled})
 	oui.label(uictx, "icon", icon_text(ic), {class = "icon"})
 	oui.label(uictx, "badge", icon_text(plus ? .Plus : .Minus), {class = "icon badge"})
@@ -1068,69 +1124,31 @@ obadge_button :: proc(key: string, ic: Icon, plus: bool, tip: string, enabled :=
 	return n.clicked && enabled
 }
 
-// The panel under the canvas: a bar ending in the mode switch, and the timeline or file browser.
-panel_timeline :: proc() {
-	if bottom_mode == .Files do files_update()
-	oui.element(uictx, "timeline", "timeline", {id = "timeline", class = bottom_mode == .Hidden ? "collapsed" : ""})
-	defer oui.end(uictx)
-	oui.element(uictx, "bar", "row", {id = "timeline-bar"})
-	oui.element(uictx, "tools", "row", {id = "bar-tools"}) // clipped first when the window is narrow
-	switch bottom_mode {
-	case .Animation:
-		timeline_bar_controls()
-	case .Files:
-		files_bar_controls()
-	case .Hidden:
-	}
-	oui.end(uictx)
-	bottom_mode_switch()
-	oui.end(uictx)
-	switch bottom_mode {
-	case .Animation:
-		oui_slot("timeline-grid", "timeline_grid")
-	case .Files:
-		files_body()
-	case .Hidden:
-	}
-}
-
 timeline_bar_controls :: proc() {
 	d := doc
-	tb :: proc(key: string, ic: Icon, tip: string, enabled := true, lit := false) -> bool {
+	tb :: proc(key: string, ic: Icon, tip: Tip, enabled := true, lit := false) -> bool {
 		c, _ := oui_icon_button(key, ic, tip, {class = "tl-btn", enabled = enabled, lit = lit})
 		return c
 	}
-	if obadge_button("layer-new", .Layer, true, "New layer (Shift+N)") do run_cmd(.Layer_New)
-	if obadge_button("layer-del", .Layer, false, "Delete layer", len(d.layers) > 1) do run_cmd(.Layer_Del)
-	if tb("layer-dup", .Copy, "Duplicate layer") do run_cmd(.Layer_Dup)
-	if tb("layer-up", .Up, "Move layer up", d.active_layer < len(d.layers) - 1) do run_cmd(.Layer_Up)
-	if tb("layer-down", .Down, "Move layer down", d.active_layer > 0) do run_cmd(.Layer_Down)
-	if tb("layer-merge", .Merge, "Merge down, applying filters (Ctrl+E)", d.active_layer > 0) do run_cmd(.Layer_Merge)
+	if obadge_button("layer-new", .Layer, true, cmd_tip("New layer", .Layer_New)) do run_cmd(.Layer_New)
+	if obadge_button("layer-del", .Layer, false, cmd_tip("Delete layer", .Layer_Del), len(d.layers) > 1) do run_cmd(.Layer_Del)
+	if tb("layer-dup", .Copy, cmd_tip("Duplicate layer", .Layer_Dup)) do run_cmd(.Layer_Dup)
+	if tb("layer-up", .Up, cmd_tip("Move layer up", .Layer_Up), d.active_layer < len(d.layers) - 1) do run_cmd(.Layer_Up)
+	if tb("layer-down", .Down, cmd_tip("Move layer down", .Layer_Down), d.active_layer > 0) do run_cmd(.Layer_Down)
+	if tb("layer-merge", .Merge, cmd_tip("Merge down", .Layer_Merge), d.active_layer > 0) do run_cmd(.Layer_Merge)
 	oui.element_leaf(uictx, "gap1", "tl-gap")
-	if obadge_button("frame-new", .Frame, true, "New frame (Alt+N)") do run_cmd(.Frame_New)
-	if tb("frame-dup", .Copy, "Duplicate frame") do run_cmd(.Frame_Dup)
-	if obadge_button("frame-del", .Frame, false, "Delete frame", len(d.frames) > 1) do run_cmd(.Frame_Del)
+	if obadge_button("frame-new", .Frame, true, cmd_tip("New frame", .Frame_New)) do run_cmd(.Frame_New)
+	if tb("frame-dup", .Copy, cmd_tip("Duplicate frame", .Frame_Dup)) do run_cmd(.Frame_Dup)
+	if obadge_button("frame-del", .Frame, false, cmd_tip("Delete frame", .Frame_Del), len(d.frames) > 1) do run_cmd(.Frame_Del)
 	oui.element_leaf(uictx, "gap2", "tl-gap")
-	if tb("first", .First, "First frame (Home)") do run_cmd(.Frame_First)
-	if tb("prev", .Left, "Previous frame (,)") do run_cmd(.Frame_Prev)
-	if tb("play", playing ? .Stop : .Right, "Play / pause (Enter)", lit = playing) do run_cmd(.Play)
-	if tb("next", .Right, "Next frame (.)") do run_cmd(.Frame_Next)
-	if tb("last", .Last, "Last frame (End)") do run_cmd(.Frame_Last)
+	if tb("first", .First, cmd_tip("First frame", .Frame_First)) do run_cmd(.Frame_First)
+	if tb("prev", .Left, cmd_tip("Previous frame", .Frame_Prev)) do run_cmd(.Frame_Prev)
+	if tb("play", playing ? .Stop : .Right, cmd_tip(playing ? "Pause" : "Play", .Play), lit = playing) do run_cmd(.Play)
+	if tb("next", .Right, cmd_tip("Next frame", .Frame_Next)) do run_cmd(.Frame_Next)
+	if tb("last", .Last, cmd_tip("Last frame", .Frame_Last)) do run_cmd(.Frame_Last)
 	oui.element_leaf(uictx, "gap3", "tl-gap")
-	// tag selector for playback
-	tag_items := make([dynamic]string, context.temp_allocator)
-	append(&tag_items, "All frames")
-	for &t in d.tags {
-		append(&tag_items, name_str(&t.name))
-	}
-	if nv, ch := ocombo("tag", 100, tag_items[:], play_tag + 1, "Playback range"); ch {
-		play_tag = nv - 1
-		if play_tag >= 0 && play_tag < len(d.tags) {
-			set_frame(d.tags[play_tag].from)
-		}
-	}
-	if obutton("Tags", 38, "Edit animation tags") do run_cmd(.Tags)
-	if obutton(fmt.tprintf("%d ms", d.frames[d.active_frame].duration), 64, "Frame duration (click to edit)", key = "duration") {
+	timeline_tag_controls()
+	if obutton(fmt.tprintf("%d ms", d.frames[d.active_frame].duration), 64, {"Frame duration", "How long the current frame shows when the animation plays. Click to change it."}, key = "duration") {
 		run_cmd(.Frame_Props)
 	}
 }
@@ -1142,7 +1160,7 @@ layer_drag_on: bool
 
 panel_timeline_grid :: proc(body: Rect) {
 	d := doc
-	hdr_w: i32 = 150
+	hdr_w: i32 = min(150, body.w / 2) // the frames keep half of a narrow panel
 	frame_w: i32 = 18
 	row_h: i32 = 16
 	hdr_h: i32 = 20
@@ -1175,7 +1193,7 @@ panel_timeline_grid :: proc(body: Rect) {
 	fill_rect(body, C_PANEL_DK)
 	vline(body.x + hdr_w - 1, body.y, body.h, C_RING_HI)
 	hline(body.x, body.y + hdr_h - 1, body.w, C_RING_HI)
-	text(body.x + 8, body.y + (hdr_h - FONT_CAP) / 2, "Layers", C_TEXT_DIM)
+	tip_text(body.x + 8, body.y + (hdr_h - FONT_CAP) / 2, "Layers", C_TEXT_DIM, {"Layers", "Each row is a layer, the top one in front. The columns on the right are the frames."})
 
 	// header: frame numbers + tags
 	clip_begin(head)
@@ -1200,6 +1218,7 @@ panel_timeline_grid :: proc(body: Rect) {
 		if ti == play_tag {
 			draw_rrect_outline(f32(tr.x - 1), f32(tr.y - 1), f32(tr.w + 2), f32(tr.h + 2), 2, WHITE)
 		}
+		if ui_hover(tr) do tooltip_hover(make_id(tr, "tag"), {name_str(&t.name), "This tag's range of frames. Click to play only these frames, again to play all."})
 		if ui_hover(tr) && ui.pressed[0] {
 			play_tag = play_tag == ti ? -1 : ti
 		}
@@ -1208,6 +1227,7 @@ panel_timeline_grid :: proc(body: Rect) {
 	// scrubbing on the header numbers
 	head_num := Rect{head.x, head.y, head.w, hdr_h - 6}
 	hid := make_id(head_num, "scrub")
+	tip_area(head_num, "scrub", {"Frames", "Click a number to go to that frame, or drag along them to scrub through the animation."})
 	if ui_hover(head_num) && ui.pressed[0] {
 		ui.active_id = hid
 	}
@@ -1237,9 +1257,15 @@ panel_timeline_grid :: proc(body: Rect) {
 		lock := Rect{row.x + 20, ry + 2, 12, 12}
 		icon(.Eye, eye.x, eye.y, l.visible ? C_TEXT : C_TEXT_OFF)
 		icon(.Lock, lock.x, lock.y, l.locked ? C_ACCENT : C_TEXT_OFF)
-		text_clipped(Rect{row.x + 38, ry, row.w - 60, row_h}, name_str(&l.name), l.visible ? C_TEXT : C_TEXT_DIM)
-		if l.opacity < 255 || l.blend != .Normal || len(l.filters) > 0 {
+		has_fx := l.opacity < 255 || l.blend != .Normal || len(l.filters) > 0
+		text_clipped(Rect{row.x + 38, ry, row.w - (has_fx ? 60 : 42), row_h}, name_str(&l.name), l.visible ? C_TEXT : C_TEXT_DIM)
+		if has_fx {
 			text(row.x + row.w - 18, ry + (row_h - FONT_CAP) / 2, "fx", C_TEXT_DIM)
+		}
+		if ui_hover(names) {
+			tip_area(row, "layer-row", {name_str(&l.name), "Click to work on this layer, double-click for its properties, right-click for its menu. Drag to move it. fx means it has an opacity, blend mode or filters."})
+			tip_area(eye, "layer-eye", {"Show or hide layer", "A hidden layer is left out of exports too."})
+			tip_area(lock, "layer-lock", {"Lock or unlock layer", "Tools can't change a locked layer."})
 		}
 		if ui_hover(row) && ui_hover(names) && ui.pressed[0] {
 			if in_rect(eye, ui.mx, ui.my) {
@@ -1319,6 +1345,9 @@ panel_timeline_grid :: proc(body: Rect) {
 				col = C_ACTIVE
 			}
 			draw_rrect(f32(cr.x), f32(cr.y), f32(cr.w), f32(cr.h), 2, col)
+			if ui_hover(grid) {
+				tip_area(cr, "cel", {fmt.tprintf("Frame %d, %s", f + 1, name_str(&d.layers[li].name)), "A cel: this layer's picture in this frame. Click to work on it, double-click to set the frame's duration."})
+			}
 			// shared (linked) cels get a small marker
 			if d.layers[li].cels[f].refs > 1 && active_cel {
 				draw_rrect(f32(cr.x + cr.w / 2 - 2), f32(cr.y + cr.h / 2 - 2), 4, 4, 1, C_ACCENT)
@@ -1355,9 +1384,10 @@ panel_status :: proc() {
 	oui.element(uictx, "status", "statusbar", {id = "status"})
 	defer oui.end(uictx)
 	if status_t > 0 {
-		oui.label(uictx, "tool", name_str(&status_msg), {id = "status-tool", class = "message"})
+		oui_tip(oui.label(uictx, "tool", name_str(&status_msg), {id = "status-tool", class = "message"}), {"Messages", "Messages from the program appear here, such as why an action could not be done."})
 	} else {
-		oui.label(uictx, "tool", TOOL_NAMES[cur_tool], {id = "status-tool"})
+		t := eff_tool()
+		oui_tip(oui.label(uictx, "tool", fmt.tprintf("%s   %s", TOOL_NAMES[t], TOOL_HINT[t]), {id = "status-tool"}), tool_tip(t))
 	}
 	oui.separator(uictx, "sep0")
 	// the readout under the pointer changes every frame, so it is drawn by hand
@@ -1366,22 +1396,23 @@ panel_status :: proc() {
 		x0, y0, x1, y1, ok := sel_bounds(d.sel, d.w, d.h)
 		if ok {
 			oui.separator(uictx, "sep1")
-			oui.label(uictx, "sel", fmt.tprintf("Sel %dx%d", x1 - x0 + 1, y1 - y0 + 1))
+			oui_tip(oui.label(uictx, "sel", fmt.tprintf("Sel %dx%d", x1 - x0 + 1, y1 - y0 + 1)), {"Selection", "The width and height of what is selected. Ctrl+D clears the selection."})
 		}
 	}
 	oui.element_leaf(uictx, "spacer", "spacer")
-	oui.label(uictx, "layer", name_str(&d.layers[d.active_layer].name))
+	oui_tip(oui.label(uictx, "layer", name_str(&d.layers[d.active_layer].name)), {"Current layer", "The layer you are drawing on. Pick another in the timeline."})
 	oui.separator(uictx, "sep2")
-	oui.label(uictx, "size", fmt.tprintf("%d x %d", d.w, d.h))
+	oui_tip(oui.label(uictx, "size", fmt.tprintf("%d x %d", d.w, d.h)), {"Sprite size", "Width by height, in pixels. Change it with Sprite > Canvas Size or Scale Sprite."})
 	oui.separator(uictx, "sep3")
-	oui.label(uictx, "frame", fmt.tprintf("Frame %d/%d", d.active_frame + 1, len(d.frames)))
+	oui_tip(oui.label(uictx, "frame", fmt.tprintf("Frame %d/%d", d.active_frame + 1, len(d.frames))), {"Current frame", "Which frame of the animation you are on, out of how many. The , and . keys step through them."})
 	oui.separator(uictx, "sep4")
-	oui.label(uictx, "zoom", fmt.tprintf("%d%%", int(d.zoom * gfx.scale * 100 + 0.5)), {class = "strong"})
+	oui_tip(oui.label(uictx, "zoom", fmt.tprintf("%d%%", int(d.zoom * gfx.scale * 100 + 0.5)), {class = "strong"}), {"Zoom", "100% shows one sprite pixel as one screen pixel. Use the mouse wheel to zoom, Ctrl+0 to fit the sprite and Ctrl+1 for 100%."})
 }
 
 // Pixel position and colour under the pointer, in the status bar.
 panel_cursor_info :: proc(r: Rect) {
 	d := doc
+	tip_area(r, "cursor-info", {"Pointer", "The pixel under the pointer: x and y from the sprite's top left corner, and its color with all layers merged."})
 	if !hover_valid || !px_valid(hover_px) do return
 	ty := r.y + (r.h - FONT_CAP) / 2
 	doc_refresh_comp(d)

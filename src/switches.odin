@@ -3,7 +3,7 @@ package pangolin
 import oui "odinui:odinui"
 
 // ---------------------------------------------------------------------------
-// Switches: Grid, Symmetry, Tiled Mode and Onion Skin are `Tool` values so they can sit in tool
+// Switches: Grid, Mirror (`.Symmetry`), Tiled Mode and Onion Skin are `Tool` values so they can sit in tool
 // groups next to the tools. Clicking one turns it on or off instead of becoming the active tool,
 // and while it is on, its settings can take over the options bar.
 // ---------------------------------------------------------------------------
@@ -93,45 +93,50 @@ options_switch_ui :: proc() -> bool {
 	#partial switch t {
 	case .Grid:
 		otext("title", "Grid", "switch-title")
-		oslider("W", 70, &opts.grid_w, 1, 256, "Grid cell width", "px", 2)
-		oslider("H", 70, &opts.grid_h, 1, 256, "Grid cell height", "px", 2)
-		oslider("X", 64, &opts.grid_ox, 0, max(opts.grid_w - 1, 0), "Grid offset from the left edge", "px")
-		oslider("Y", 64, &opts.grid_oy, 0, max(opts.grid_h - 1, 0), "Grid offset from the top edge", "px")
-		ocheck("Snap", &opts.snap, "Selections, shapes and moves snap to the grid while it is shown (Ctrl+Shift+;)")
-		if obutton("Grid Off", 60, "Hide the grid (Ctrl+')") do switch_set(.Grid, false)
+		oslider("W", 70, &opts.grid_w, 1, 256, {"Grid width", "The width of one grid cell in sprite pixels."}, "px", 2)
+		oslider("H", 70, &opts.grid_h, 1, 256, {"Grid height", "The height of one grid cell in sprite pixels."}, "px", 2)
+		oslider("X", 64, &opts.grid_ox, 0, max(opts.grid_w - 1, 0), {"Grid offset X", "How far the grid is pushed right from the sprite's left edge."}, "px")
+		oslider("Y", 64, &opts.grid_oy, 0, max(opts.grid_h - 1, 0), {"Grid offset Y", "How far the grid is pushed down from the sprite's top edge."}, "px")
+		ocheck("Snap", &opts.snap, {"Snap to grid (Ctrl+Shift+;)", "Selections, shapes and moves snap to the grid while it is shown."})
+		if obutton("Grid Off", 60, {"Grid Off (Ctrl+;)", "Hide the grid. Its settings are kept for the next time."}) do switch_set(.Grid, false)
 	case .Symmetry:
-		otext("title", "Symmetry", "switch-title")
-		if c, _ := oui_icon_button("sym-x-opt", .Sym_X, "Mirror left / right (Shift+X)", {lit = opts.sym_x, enabled = true}); c {
+		otext("title", "Mirror", "switch-title")
+		if c, _ := oui_icon_button("sym-x-opt", .Sym_X, cmd_tip("Mirror Horizontal", .Toggle_Sym_X), {lit = opts.sym_x, enabled = true}); c {
 			opts.sym_x = !opts.sym_x
 		}
-		if c, _ := oui_icon_button("sym-y-opt", .Sym_Y, "Mirror top / bottom (Shift+Y)", {lit = opts.sym_y, enabled = true}); c {
+		if c, _ := oui_icon_button("sym-y-opt", .Sym_Y, cmd_tip("Mirror Vertical", .Toggle_Sym_Y), {lit = opts.sym_y, enabled = true}); c {
 			opts.sym_y = !opts.sym_y
 		}
-		ocheck("Guides", &opts.sym_guides, "Show the mirror lines on the canvas")
-		if obutton("Symmetry Off", 84, "Stop mirroring") do switch_set(.Symmetry, false)
+		ocheck("Guides", &opts.sym_guides, {"Mirror guides", "Draw the lines that drawing is mirrored across. They are only a guide and are not part of the sprite."})
+		if obutton("Mirror Off", 72, {"", "Stop mirroring. Turning Mirror on again brings the same directions back."}) do switch_set(.Symmetry, false)
 	case .Tiling:
 		otext("title", "Tiled Mode", "switch-title")
 		modes := [?]Tile_Mode{.X, .Y, .Both}
 		labels := [?]string{"X", "Y", "X+Y"}
+		tile_tips := [?]Tip {
+			{"Tile across", "Repeat the sprite to the left and right. Drawing wraps across its left and right edges."},
+			{"Tile down", "Repeat the sprite above and below. Drawing wraps across its top and bottom edges."},
+			{"Tile both ways", "Repeat the sprite on all sides. Drawing wraps across all its edges, for seamless tiles."},
+		}
 		oui.element(uictx, "tile-mode", "button-group")
 		for m, i in modes {
-			if obutton(labels[i], 30, "Repeat the sprite around the canvas; drawing wraps across the edges", true, opts.tile == m) {
+			if obutton(labels[i], 30, tile_tips[i], true, opts.tile == m) {
 				opts.tile = m
 			}
 		}
 		oui.end(uictx)
-		if obutton("Tiling Off", 66, "Stop tiling (Shift+T cycles)") do switch_set(.Tiling, false)
+		if obutton("Tiling Off", 66, {"", "Stop repeating the sprite. Shift+T steps through the tiling modes."}) do switch_set(.Tiling, false)
 	case .Onion:
 		otext("title", "Onion Skin", "switch-title")
 		before, after := opts.onion_prev > 0, opts.onion_next > 0
-		ch1 := ocheck("Previous", &before, "Show the previous frame in red")
-		ch2 := ocheck("Next", &after, "Show the next frame in blue")
+		ch1 := ocheck("Previous", &before, {"Previous frame", "Show the previous frame behind this one, tinted red."})
+		ch2 := ocheck("Next", &after, {"Next frame", "Show the next frame behind this one, tinted blue."})
 		if ch1 || ch2 {
 			opts.onion_prev, opts.onion_next = before ? 1 : 0, after ? 1 : 0
 			doc.comp_dirty = true
 		}
-		oslider("Opacity", 90, &opts.onion_alpha, 5, 100, "How strongly the neighbouring frames show", "%")
-		if obutton("Onion Off", 64, "Hide the neighbouring frames (Alt+O)") do switch_set(.Onion, false)
+		oslider("Opacity", 90, &opts.onion_alpha, 5, 100, {"Onion skin opacity", "How strongly the neighboring frames show."}, "%")
+		if obutton("Onion Off", 64, {"Onion Off (Alt+O)", "Hide the neighboring frames."}) do switch_set(.Onion, false)
 	}
 	return true
 }

@@ -291,23 +291,25 @@ dlg_workspaces :: proc() {
 	n := len(ws_entries)
 	for e, i in ws_entries do names[i] = e.name
 	dialog.a = clamp(dialog.a, 0, n - 1)
-	text(c.x, y + 3, "Workspace", C_TEXT)
-	if nv, ch := combo(Rect{c.x + 80, y, c.w - 80, 14}, names[:n], dialog.a); ch {
+	PICK_TIP :: "Choose a workspace to load or delete. A workspace is a whole tool set-up: the groups, their hotkeys and the brush settings."
+	tip_text(c.x, y + 3, "Workspace", C_TEXT, {"Workspace", PICK_TIP})
+	if nv, ch := combo(Rect{c.x + 80, y, c.w - 80, 14}, names[:n], dialog.a, {"Workspace", PICK_TIP}); ch {
 		dialog.a = nv
 	}
 	y += 22
-	if button(Rect{c.x, y, 60, 16}, "Load", "Switch to the selected workspace") {
+	if button(Rect{c.x, y, 60, 16}, "Load", {"Load", "Switch to the selected workspace. Your current tool groups are replaced, so save them first if you want to keep them."}) {
 		workspace_apply_index(dialog.a)
 	}
 	saved := ws_entries[dialog.a].builtin < 0
-	if button(Rect{c.x + 66, y, 60, 16}, "Delete", "Delete the selected saved workspace", saved) {
+	if button(Rect{c.x + 66, y, 60, 16}, "Delete", {"Delete", "Delete the selected workspace's file. The built-in workspaces can't be deleted."}, saved) {
 		workspace_delete_index(dialog.a)
 		ws_refresh()
 	}
 	y += 24
-	text(c.x, y + 3, "Save as", C_TEXT)
-	text_field(Rect{c.x + 80, y, c.w - 80 - 66, 14}, &dialog.name, "Name for the current tool set-up")
-	if button(Rect{c.x + c.w - 60, y - 1, 60, 16}, "Save", "Save the current tool set-up as a workspace") {
+	SAVE_NAME_TIP :: Tip{"Save as", "The name to save the current tool set-up under."}
+	tip_text(c.x, y + 3, "Save as", C_TEXT, SAVE_NAME_TIP)
+	text_field(Rect{c.x + 80, y, c.w - 80 - 66, 14}, &dialog.name, SAVE_NAME_TIP)
+	if button(Rect{c.x + c.w - 60, y - 1, 60, 16}, "Save", {"Save", "Save the current tool set-up as a workspace under the name on the left. A workspace with that name is replaced."}) {
 		if workspace_save_named(name_str(&dialog.name)) {
 			ws_refresh()
 			for e, i in ws_entries {
@@ -316,14 +318,14 @@ dlg_workspaces :: proc() {
 		}
 	}
 	y += 24
-	if button(Rect{c.x, y, 80, 16}, "Import...", "Load a workspace file and add it to the list") {
+	if button(Rect{c.x, y, 80, 16}, "Import...", {"Import", cmd_help(.Ws_Import)}) {
 		workspace_import()
 		ws_refresh()
 	}
-	if button(Rect{c.x + 86, y, 80, 16}, "Export...", "Save the current tool set-up to a workspace file") {
+	if button(Rect{c.x + 86, y, 80, 16}, "Export...", {"Export", cmd_help(.Ws_Export)}) {
 		workspace_export()
 	}
-	ok, _ := dialog_buttons(c, "Close", "")
+	ok, _ := dialog_buttons(c, "Close this window (Enter or Esc).", "Close", "")
 	if ok {
 		dialog_close()
 	}

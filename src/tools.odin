@@ -43,10 +43,15 @@ eff_tool :: proc() -> Tool {
 	if IsKeyDown(.SPACE) && ui.focus_id == 0 && dialog.kind == .None {
 		return .Hand
 	}
+	if pen_eraser_active() {
+		if t, ok := pen_eraser_group_tool(); ok {
+			return t
+		}
+	}
 	if ui.alt && draw_tool(cur_tool) && cur_tool != .Eraser {
 		return .Picker
 	}
-	// the pen's eraser end erases with any drawing tool
+	// with no group assigned, the pen's eraser end erases with any drawing tool
 	if pen_eraser_active() && draw_tool(cur_tool) {
 		return .Eraser
 	}

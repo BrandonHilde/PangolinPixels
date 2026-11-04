@@ -75,25 +75,6 @@ Frame :: struct {
 	duration: int, // milliseconds
 }
 
-Tag_Dir :: enum u8 {
-	Forward,
-	Reverse,
-	Ping_Pong,
-}
-
-TAG_DIR_NAMES := [Tag_Dir]string {
-	.Forward   = "Forward",
-	.Reverse   = "Reverse",
-	.Ping_Pong = "Ping-Pong",
-}
-
-Tag :: struct {
-	name:     Name,
-	from, to: int,
-	dir:      Tag_Dir,
-	color:    Color,
-}
-
 // Everything that undo/redo restores.
 State :: struct {
 	w, h:   int,
@@ -162,9 +143,9 @@ TOOL_NAMES := [Tool]string {
 	.Pencil         = "Pencil (B)",
 	.Eraser         = "Eraser (E)",
 	.Line           = "Line (L)",
-	.Rect           = "Rectangle (U)",
+	.Rect           = "Rectangle (R)",
 	.Ellipse        = "Ellipse (O)",
-	.Curve          = "Bezier Curve (C)",
+	.Curve          = "Bezier Curve (P)",
 	.Bucket         = "Paint Bucket (G)",
 	.Picker         = "Eyedropper (I)",
 	.Select_Rect    = "Rectangular Marquee (M)",
@@ -175,10 +156,10 @@ TOOL_NAMES := [Tool]string {
 	.Spray          = "Spray (S)",
 	.Hand           = "Hand (H)",
 	.Zoom           = "Zoom (Z)",
-	.Grid           = "Grid (switch)",
-	.Symmetry       = "Symmetry (switch)",
-	.Tiling         = "Tiled Mode (switch)",
-	.Onion          = "Onion Skin (switch)",
+	.Grid           = "Grid (Ctrl+;)",
+	.Symmetry       = "Mirror (Shift+X, Shift+Y)",
+	.Tiling         = "Tiled Mode (Shift+T)",
+	.Onion          = "Onion Skin (Alt+O)",
 }
 
 Sel_Mode :: enum {

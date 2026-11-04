@@ -389,21 +389,21 @@ dlg_pixelate :: proc() {
 	right := Rect{c.x + 206, c.y, c.w - 206, c.h - 22}
 
 	// original
-	text(left.x, left.y, fmt.tprintf("Original  %dx%d", p.src_w, p.src_h), C_TEXT_DIM)
+	tip_text(left.x, left.y, fmt.tprintf("Original  %dx%d", p.src_w, p.src_h), C_TEXT_DIM, {"Original", "The image you are converting, and its size in pixels."})
 	pixelate_draw_fit(Rect{left.x, left.y + 12, left.w, 110}, p.tex_src, p.src_w, p.src_h, false)
 
 	y := left.y + 130
-	if row_int(left, y, "Width", &p.w, 1, PIXELATE_MAX) {
+	if row_int(left, y, "Width", &p.w, 1, PIXELATE_MAX, "The width of the pixel art in pixels.") {
 		if p.keep_aspect do pixelate_fit_aspect(true)
 		p.scaled_dirty = true
 	}
 	y += 20
-	if row_int(left, y, "Height", &p.h, 1, PIXELATE_MAX) {
+	if row_int(left, y, "Height", &p.h, 1, PIXELATE_MAX, "The height of the pixel art in pixels.") {
 		if p.keep_aspect do pixelate_fit_aspect(false)
 		p.scaled_dirty = true
 	}
 	y += 20
-	if checkbox(left.x, y, "Keep aspect ratio", &p.keep_aspect) && p.keep_aspect {
+	if checkbox(left.x, y, "Keep aspect ratio", &p.keep_aspect, {"Keep aspect ratio", "Keep the width and height in step, so the image is not stretched."}) && p.keep_aspect {
 		pixelate_fit_aspect(true)
 		p.scaled_dirty = true
 	}
@@ -412,7 +412,7 @@ dlg_pixelate :: proc() {
 	sizes := [?]int{16, 32, 64, 128}
 	bx := left.x
 	for s in sizes {
-		if button(Rect{bx, y, 45, 14}, fmt.tprintf("%d", s), fmt.tprintf("%d pixels wide", s), true, p.w == s) {
+		if button(Rect{bx, y, 45, 14}, fmt.tprintf("%d", s), {fmt.tprintf("%d pixels wide", s), "Set the pixel art's width to this size."}, true, p.w == s) {
 			p.w = s
 			if p.keep_aspect {
 				pixelate_fit_aspect(true)
@@ -424,25 +424,28 @@ dlg_pixelate :: proc() {
 		bx += 50
 	}
 	y += 22
-	text(left.x, y + 3, "Palette", C_TEXT)
-	if combo_enum(Rect{left.x + 60, y, left.w - 60, 14}, PIX_PALETTE_NAMES, &p.pal_kind) {
+	PAL_TIP :: "The colors the result may use. Auto picks the best set for this image, the others use a fixed palette."
+	tip_text(left.x, y + 3, "Palette", C_TEXT, {"Palette", PAL_TIP})
+	if combo_enum(Rect{left.x + 60, y, left.w - 60, 14}, PIX_PALETTE_NAMES, &p.pal_kind, {"Palette", PAL_TIP}) {
 		p.out_dirty = true
 	}
 	y += 20
 	if p.pal_kind == .Auto {
-		text(left.x, y + 3, "Colors", C_TEXT)
-		if slider(Rect{left.x + 60, y, left.w - 60, 14}, &p.auto_colors, 2, 64, "") {
+		COLORS_TIP :: Tip{"Colors", "How many colors Auto picks for this image."}
+		tip_text(left.x, y + 3, "Colors", C_TEXT, COLORS_TIP)
+		if slider(Rect{left.x + 60, y, left.w - 60, 14}, &p.auto_colors, 2, 64, "", COLORS_TIP) {
 			p.out_dirty = true
 		}
 		y += 20
 	}
-	text(left.x, y + 3, "Dither", C_TEXT)
-	if combo_enum(Rect{left.x + 60, y, left.w - 60, 14}, DITHER_NAMES, &p.dither) {
+	DITHER_TIP :: "How to fake shades the palette doesn't have. None gives flat areas, Ordered a regular pattern, Floyd-Steinberg a finer scattered one."
+	tip_text(left.x, y + 3, "Dither", C_TEXT, {"Dither", DITHER_TIP})
+	if combo_enum(Rect{left.x + 60, y, left.w - 60, 14}, DITHER_NAMES, &p.dither, {"Dither", DITHER_TIP}) {
 		p.out_dirty = true
 	}
 
 	// result preview
-	text(right.x, right.y, fmt.tprintf("Pixel art  %dx%d  -  %d colors used", p.w, p.h, p.used_colors), C_TEXT_DIM)
+	tip_text(right.x, right.y, fmt.tprintf("Pixel art  %dx%d  -  %d colors used", p.w, p.h, p.used_colors), C_TEXT_DIM, {"Result", "A live preview of the pixel art, with its size and how many colors it uses."})
 	pal_h: i32 = 30
 	pixelate_draw_fit(Rect{right.x, right.y + 12, right.w, right.h - 12 - pal_h - 4}, p.tex_out, p.w, p.h, true)
 
@@ -450,6 +453,7 @@ dlg_pixelate :: proc() {
 	sw := Rect{right.x, right.y + right.h - pal_h, right.w, pal_h}
 	fill_rect(sw, C_PANEL_DK)
 	outline_rect(sw, C_BORDER)
+	tip_area(sw, "pixelate-palette", {"Palette in use", "The colors of the result. They become the new sprite's palette."})
 	if n := len(p.pal); n > 0 {
 		per_row := max(n <= 32 ? (n + 1) / 2 : 32, 1)
 		rows := (n + per_row - 1) / per_row
@@ -464,7 +468,7 @@ dlg_pixelate :: proc() {
 		text_centered(sw, "Palette is empty", C_TEXT_DIM)
 	}
 
-	ok, cancel := dialog_buttons(c, "Create")
+	ok, cancel := dialog_buttons(c, "Open the result as a new sprite (Enter).", "Create")
 	if cancel {
 		dialog_close()
 	}

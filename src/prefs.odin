@@ -8,12 +8,17 @@ import "core:strings"
 // Tiny key=value preferences file stored next to the executable.
 
 prefs_path :: proc() -> string {
-	return fmt.tprintf("%spangolin.cfg", gfx_app_dir())
+	return fmt.tprintf("%spixels.cfg", gfx_app_dir())
 }
 
-// Settings file used before the app was renamed; read once if the new one does not exist.
-prefs_legacy_path :: proc() -> string {
-	return fmt.tprintf("%spixel.cfg", gfx_app_dir())
+// The settings file to read in `dir`: the app has had other names, and an older file is read once
+// if the current one does not exist. "" if there is none.
+prefs_find :: proc(dir: string) -> string {
+	for name in ([?]string{"pixels.cfg", "pangolin.cfg", "pixel.cfg"}) {
+		path := fmt.tprintf("%s%s", dir, name)
+		if os.exists(path) do return path
+	}
+	return ""
 }
 
 prefs_save :: proc() {
@@ -27,8 +32,7 @@ prefs_save :: proc() {
 	fmt.sbprintf(&sb, "pixel_grid=%d\n", b2i(opts.pixel_grid))
 	fmt.sbprintf(&sb, "sym_guides=%d\n", b2i(opts.sym_guides))
 	fmt.sbprintf(&sb, "show_checks=%d\n", b2i(opts.show_checks))
-	fmt.sbprintf(&sb, "bottom_panel=%d\n", int(bottom_mode))
-	fmt.sbprintf(&sb, "files_dir=%s\n", files_dir)
+	files_prefs_write(&sb)
 	fmt.sbprintf(&sb, "preview=%d\n", b2i(show_preview))
 	fmt.sbprintf(&sb, "grid_w=%d\n", opts.grid_w)
 	fmt.sbprintf(&sb, "grid_h=%d\n", opts.grid_h)
@@ -45,12 +49,9 @@ prefs_save :: proc() {
 }
 
 prefs_load :: proc() {
-	path := prefs_path()
-	if !os.exists(path) {
-		path = prefs_legacy_path()
-		if !os.exists(path) {
-			return
-		}
+	path := prefs_find(gfx_app_dir())
+	if path == "" {
+		return
 	}
 	data, ok := read_file(path)
 	if !ok {
@@ -69,8 +70,7 @@ prefs_load :: proc() {
 			tool_groups_parse(sval)
 			continue
 		}
-		if key == "files_dir" {
-			files_dir = strings.clone(sval)
+		if files_prefs_read(key, sval) {
 			continue
 		}
 		val, vok := strconv.parse_int(sval)
@@ -92,8 +92,6 @@ prefs_load :: proc() {
 			opts.show_checks = val != 0
 		case "timeline": // from before the bottom panel had a file browser
 			bottom_mode = val != 0 ? .Animation : .Hidden
-		case "bottom_panel":
-			bottom_mode = Bottom_Mode(clamp(val, 0, len(Bottom_Mode) - 1))
 		case "preview":
 			show_preview = val != 0
 		case "grid_w":

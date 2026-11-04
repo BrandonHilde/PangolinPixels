@@ -27,6 +27,7 @@ Dialog_Kind :: enum {
 	Canvas_Bg,
 	Group_Rename,
 	Workspaces,
+	UI_Scale,
 }
 
 Dialog :: struct {
@@ -45,8 +46,6 @@ Dialog :: struct {
 
 dialog: Dialog
 
-ui_scale_pref := 0 // percent, 0 = auto
-
 BG_FILL_NAMES := [?]string{"Transparent", "White", "Black", "Foreground", "Background"}
 DIALOG_W_DEFAULT :: 260
 
@@ -58,7 +57,7 @@ dialog_open :: proc(k: Dialog_Kind) {
 		msg_text  = dialog.msg_text,
 	}
 	switch k {
-	case .None, .Message, .Shortcuts, .About, .Confirm, .Pixelate, .Group_Rename:
+	case .None, .Message, .Shortcuts, .About, .Confirm, .Pixelate, .Group_Rename, .UI_Scale:
 	case .Workspaces:
 		ws_refresh()
 		for e, i in ws_entries {
@@ -76,7 +75,7 @@ dialog_open :: proc(k: Dialog_Kind) {
 	case .Layer_Props:
 		l := &doc.layers[doc.active_layer]
 		dialog.name = l.name
-		dialog.a = int(l.opacity)
+		dialog.a = opacity_percent(l.opacity)
 		dialog.b = int(l.blend)
 		dialog.flag = l.visible
 		dialog.flag2 = l.locked
@@ -102,10 +101,7 @@ dialog_open :: proc(k: Dialog_Kind) {
 		dialog.flag = opts.grid
 		dialog.flag2 = opts.snap
 	case .Prefs:
-		dialog.a = ui_scale_wanted()
 		dialog.b = bg_mode
-		dialog.c = ui_scale_pref // to go back to on Cancel
-		dialog.flag = ui_scale_pref == 0
 	case .Outline:
 		dialog.flag = false
 	case .Replace_Color:
@@ -132,50 +128,36 @@ dialog_close :: proc() {
 	dialog.kind = .None
 }
 
-// Draws the dim background and window frame; returns the content area.
-dialog_frame :: proc(title: string, w, h: i32) -> Rect {
-	ui.layer = 2
-	fill_rect(Rect{0, 0, i32(ui.w), i32(ui.h)}, Color{6, 7, 10, 130})
-	x := (i32(ui.w) - w) / 2
-	y := (i32(ui.h) - h) / 2
-	draw_shadow(f32(x), f32(y + 6), f32(w), f32(h), 7, 22, Color{0, 0, 0, 190})
-	draw_rrect(f32(x), f32(y), f32(w), f32(h), 7, C_PANEL)
-	// title bar: rounded on top only (the lower half is clipped away)
-	clip_begin(Rect{x, y, w, 20})
-	draw_rrect(f32(x), f32(y), f32(w), 40, 7, C_PANEL_DK)
-	clip_end()
-	hline(x, y + 20, w, C_BORDER)
-	draw_rrect_outline(f32(x), f32(y), f32(w), f32(h), 7, C_RING_HI)
-	text(x + 12, y + (20 - FONT_CAP) / 2, title, C_TEXT)
-	return Rect{x + 12, y + 26, w - 24, h - 34}
-}
-
 // OK / Cancel row at the bottom of the content area.
-dialog_buttons :: proc(c: Rect, ok_label := "OK", cancel_label := "Cancel") -> (ok, cancel: bool) {
-	y := c.y + c.h - 16
-	r := Rect{c.x + c.w - 60, y, 60, 16}
-	if button(r, ok_label) {
+dialog_buttons :: proc(c: Rect, ok_tip: string, ok_label := "OK", cancel_label := "Cancel") -> (ok, cancel: bool) {
+	y := c.y + c.h - 18
+	r := Rect{c.x + c.w - 64, y, 64, 18}
+	if button_primary(r, ok_label, {ok_label, ok_tip}) {
 		ok = true
 	}
 	if cancel_label != "" {
-		if button(Rect{r.x - 66, y, 60, 16}, cancel_label) {
+		if button(Rect{r.x - 70, y, 64, 18}, cancel_label, {cancel_label, "Close this window without changing anything (Esc)."}) {
 			cancel = true
 		}
 	}
-	if ui.focus_id == 0 {
+	if ui.focus_id == 0 && !popup.open {
 		if IsKeyPressed(.ENTER) || IsKeyPressed(.KP_ENTER) {
 			ok = true
 		}
-		if IsKeyPressed(.ESCAPE) && cancel_label != "" {
-			cancel = true
+		if IsKeyPressed(.ESCAPE) {
+			if cancel_label != "" {
+				cancel = true
+			} else {
+				ok = true
+			}
 		}
 	}
 	return
 }
 
-row_int :: proc(c: Rect, y: i32, label: string, v: ^int, lo, hi: int, tip := "") -> bool {
-	text(c.x, y + 3, label, C_TEXT)
-	return field_int(Rect{c.x + 110, y, 72, 14}, v, lo, hi, tip)
+row_int :: proc(c: Rect, y: i32, name: string, v: ^int, lo, hi: int, desc: string) -> bool {
+	tip_text(c.x, y + 3, name, C_TEXT, {name, desc})
+	return field_int(Rect{c.x + 110, y, 72, 14}, v, lo, hi, {name, desc})
 }
 
 dialogs_run :: proc() {
@@ -226,29 +208,33 @@ dialogs_run :: proc() {
 		dlg_group_rename()
 	case .Workspaces:
 		dlg_workspaces()
+	case .UI_Scale:
+		dlg_ui_scale()
 	}
 }
 
 dlg_new :: proc() {
 	c := dialog_frame("New Sprite", 250, 160)
 	y := c.y
-	row_int(c, y, "Width", &dialog.a, 1, 4096)
+	row_int(c, y, "Width", &dialog.a, 1, 4096, "The width of the new sprite in pixels.")
 	y += 20
-	row_int(c, y, "Height", &dialog.b, 1, 4096)
+	row_int(c, y, "Height", &dialog.b, 1, 4096, "The height of the new sprite in pixels.")
 	y += 22
 	sizes := [?]int{16, 32, 64, 128, 256}
 	for s, i in sizes {
-		if button(Rect{c.x + i32(i) * 44, y, 42, 14}, fmt.tprintf("%d", s)) {
+		label := fmt.tprintf("%d", s)
+		if button(Rect{c.x + i32(i) * 44, y, 42, 14}, label, {fmt.tprintf("%d x %d", s, s), "Fill in a square size."}) {
 			dialog.a, dialog.b = s, s
 		}
 	}
 	y += 22
-	text(c.x, y + 3, "Background", C_TEXT)
-	nv, ch := combo(Rect{c.x + 110, y, 110, 14}, BG_FILL_NAMES[:], dialog.c)
+	BG_TIP :: "What the first layer starts filled with. Foreground and Background are the two colors in use now."
+	tip_text(c.x, y + 3, "Background", C_TEXT, {"Background", BG_TIP})
+	nv, ch := combo(Rect{c.x + 110, y, 110, 14}, BG_FILL_NAMES[:], dialog.c, {"Background", BG_TIP})
 	if ch {
 		dialog.c = nv
 	}
-	ok, cancel := dialog_buttons(c)
+	ok, cancel := dialog_buttons(c, "Create the sprite in a new tab (Enter).")
 	if cancel {
 		dialog_close()
 	}
@@ -279,18 +265,20 @@ dlg_new :: proc() {
 dlg_canvas_size :: proc() {
 	c := dialog_frame("Canvas Size", 250, 190)
 	y := c.y
-	row_int(c, y, "Width", &dialog.a, 1, 8192)
+	row_int(c, y, "Width", &dialog.a, 1, 8192, "The new canvas width in pixels. Nothing is scaled: the canvas grows, or the sprite is cut off.")
 	y += 20
-	row_int(c, y, "Height", &dialog.b, 1, 8192)
+	row_int(c, y, "Height", &dialog.b, 1, 8192, "The new canvas height in pixels. Nothing is scaled: the canvas grows, or the sprite is cut off.")
 	y += 22
-	text(c.x, y + 3, "Anchor", C_TEXT)
+	ANCHOR_TIP :: "Where the sprite stays when the canvas changes: new space is added, or pixels are cut off, on the other sides."
+	tip_text(c.x, y + 3, "Anchor", C_TEXT, {"Anchor", ANCHOR_TIP})
 	for i in 0 ..< 9 {
 		r := Rect{c.x + 110 + i32(i % 3) * 18, y + i32(i / 3) * 18, 16, 16}
-		if icon_button(r, dialog.c == i ? .Check : .Minus, "", dialog.c == i) {
+		// (the id comes from the title, and each of the nine has its own place)
+		if icon_button(r, dialog.c == i ? .Check : .Minus, {"Anchor", ANCHOR_TIP}, dialog.c == i) {
 			dialog.c = i
 		}
 	}
-	ok, cancel := dialog_buttons(c)
+	ok, cancel := dialog_buttons(c, "Apply this canvas size (Enter). You can undo it.")
 	if cancel {
 		dialog_close()
 	}
@@ -307,24 +295,25 @@ dlg_canvas_size :: proc() {
 dlg_scale :: proc() {
 	c := dialog_frame("Scale Sprite", 250, 160)
 	y := c.y
-	if row_int(c, y, "Width", &dialog.a, 1, 8192) && dialog.flag {
+	if row_int(c, y, "Width", &dialog.a, 1, 8192, "The sprite's new width in pixels. Pixels are repeated or dropped, never blurred.") && dialog.flag {
 		dialog.b = max(int(f32(dialog.a) * dialog.ratio + 0.5), 1)
 	}
 	y += 20
-	if row_int(c, y, "Height", &dialog.b, 1, 8192) && dialog.flag {
+	if row_int(c, y, "Height", &dialog.b, 1, 8192, "The sprite's new height in pixels. Pixels are repeated or dropped, never blurred.") && dialog.flag {
 		dialog.a = max(int(f32(dialog.b) / dialog.ratio + 0.5), 1)
 	}
 	y += 22
-	checkbox(c.x, y, "Lock aspect ratio", &dialog.flag)
+	checkbox(c.x, y, "Lock aspect ratio", &dialog.flag, {"Lock aspect ratio", "Keep the width and height in step, so the sprite is not stretched."})
 	y += 18
 	pcts := [?]int{50, 200, 300, 400}
 	for p, i in pcts {
-		if button(Rect{c.x + i32(i) * 44, y, 42, 14}, fmt.tprintf("%d%%", p)) {
+		label := fmt.tprintf("%d%%", p)
+		if button(Rect{c.x + i32(i) * 44, y, 42, 14}, label, {label, "Fill in this percentage of the sprite's current size."}) {
 			dialog.a = max(doc.w * p / 100, 1)
 			dialog.b = max(doc.h * p / 100, 1)
 		}
 	}
-	ok, cancel := dialog_buttons(c)
+	ok, cancel := dialog_buttons(c, "Scale the sprite to this size (Enter). You can undo it.")
 	if cancel {
 		dialog_close()
 	}
@@ -335,24 +324,36 @@ dlg_scale :: proc() {
 	}
 }
 
+// Layer opacity is stored 0-255 and shown as a percentage. Rounding both ways keeps a value steady on the way through.
+opacity_percent :: proc(o: u8) -> int {
+	return (int(o) * 100 + 127) / 255
+}
+
+opacity_from_percent :: proc(p: int) -> u8 {
+	return u8((p * 255 + 50) / 100)
+}
+
+LAYER_OPACITY_TIP :: Tip{"Layer opacity", "How solid this layer is drawn over the ones below it. Its pixels are not changed."}
+LAYER_BLEND_TIP :: Tip{"Blend mode", "How this layer's colors mix with the layers below it. Normal just covers them."}
+
 dlg_layer_props :: proc() {
 	c := dialog_frame("Layer Properties", 270, 170)
 	y := c.y
-	text(c.x, y + 3, "Name", C_TEXT)
-	text_field(Rect{c.x + 70, y, 170, 14}, &dialog.name)
+	tip_text(c.x, y + 3, "Name", C_TEXT, {"Layer name", "The name shown in the timeline."})
+	text_field(Rect{c.x + 70, y, 170, 14}, &dialog.name, {"Layer name", "The name shown in the timeline."})
 	y += 20
-	text(c.x, y + 3, "Opacity", C_TEXT)
-	slider(Rect{c.x + 70, y, 170, 14}, &dialog.a, 0, 255, "")
+	tip_text(c.x, y + 3, "Opacity", C_TEXT, LAYER_OPACITY_TIP)
+	slider(Rect{c.x + 70, y, 170, 14}, &dialog.a, 0, 100, "", LAYER_OPACITY_TIP, "%")
 	y += 20
-	text(c.x, y + 3, "Blend", C_TEXT)
-	nv, ch := combo(Rect{c.x + 70, y, 110, 14}, blend_names_slice(), dialog.b)
+	tip_text(c.x, y + 3, "Blend", C_TEXT, LAYER_BLEND_TIP)
+	nv, ch := combo(Rect{c.x + 70, y, 110, 14}, blend_names_slice(), dialog.b, LAYER_BLEND_TIP)
 	if ch {
 		dialog.b = nv
 	}
 	y += 22
-	checkbox(c.x, y, "Visible", &dialog.flag)
-	checkbox(c.x + 80, y, "Locked", &dialog.flag2)
-	ok, cancel := dialog_buttons(c)
+	checkbox(c.x, y, "Visible", &dialog.flag, {"Visible", "Whether this layer is shown. A hidden layer is left out of exports too."})
+	checkbox(c.x + 80, y, "Locked", &dialog.flag2, {"Locked", "Tools can't change a locked layer."})
+	ok, cancel := dialog_buttons(c, "Apply these settings to the layer (Enter). You can undo it.")
 	if cancel {
 		dialog_close()
 	}
@@ -360,7 +361,7 @@ dlg_layer_props :: proc() {
 		history_push(doc)
 		l := &doc.layers[doc.active_layer]
 		l.name = dialog.name
-		l.opacity = u8(dialog.a)
+		if dialog.a != opacity_percent(l.opacity) do l.opacity = opacity_from_percent(dialog.a)
 		l.blend = Blend(dialog.b)
 		l.visible = dialog.flag
 		l.locked = dialog.flag2
@@ -380,10 +381,10 @@ blend_names_slice :: proc() -> []string {
 dlg_frame_props :: proc() {
 	c := dialog_frame("Frame Properties", 250, 110)
 	y := c.y
-	row_int(c, y, "Duration (ms)", &dialog.a, 10, 60000)
+	row_int(c, y, "Duration (ms)", &dialog.a, 10, 60000, "How long this frame shows when the animation plays, in thousandths of a second.")
 	y += 22
-	checkbox(c.x, y, "Apply to all frames", &dialog.flag)
-	ok, cancel := dialog_buttons(c)
+	checkbox(c.x, y, "Apply to all frames", &dialog.flag, {"Apply to all frames", "Give every frame this duration, not just the current one."})
+	ok, cancel := dialog_buttons(c, "Apply this duration (Enter). You can undo it.")
 	if cancel {
 		dialog_close()
 	}
@@ -401,84 +402,27 @@ dlg_frame_props :: proc() {
 	}
 }
 
-dlg_tags :: proc() {
-	rows := max(len(doc.tags), 1)
-	h := i32(70 + rows * 20)
-	c := dialog_frame("Animation Tags", 440, h)
-	y := c.y
-	if len(doc.tags) == 0 {
-		text(c.x, y + 3, "No tags yet. Tags name a range of frames for playback.", C_TEXT_DIM)
-		y += 20
-	}
-	del := -1
-	for &t, i in doc.tags {
-		text_field(Rect{c.x, y, 100, 14}, &t.name)
-		tf := t.from + 1
-		tt := t.to + 1
-		text(c.x + 108, y + 3, "from", C_TEXT_DIM)
-		if field_int(Rect{c.x + 134, y, 36, 14}, &tf, 1, len(doc.frames)) {
-			t.from = tf - 1
-			if t.to < t.from do t.to = t.from
-		}
-		text(c.x + 176, y + 3, "to", C_TEXT_DIM)
-		if field_int(Rect{c.x + 192, y, 36, 14}, &tt, 1, len(doc.frames)) {
-			t.to = tt - 1
-			if t.from > t.to do t.from = t.to
-		}
-		combo_enum(Rect{c.x + 234, y, 80, 14}, TAG_DIR_NAMES, &t.dir)
-		// color swatch cycles through hues
-		sw := Rect{c.x + 320, y, 14, 14}
-		fill_rect(sw, t.color)
-		outline_rect(sw, C_BORDER)
-		if in_rect(sw, ui.mx, ui.my) && ui.pressed[0] && ui.layer == ui.input_layer {
-			h, s, v := rgb_to_hsv(t.color)
-			t.color = hsv_to_rgb(h + 40, s, v)
-		}
-		if icon_button(Rect{c.x + 340, y, 16, 14}, .Trash, "Delete tag") {
-			del = i
-		}
-		y += 20
-	}
-	if del >= 0 {
-		ordered_remove(&doc.tags, del)
-		if play_tag >= len(doc.tags) {
-			play_tag = -1
-		}
-	}
-	if button(Rect{c.x, c.y + c.h - 16, 80, 16}, "Add tag") {
-		t := Tag {
-			from  = doc.active_frame,
-			to    = doc.active_frame,
-			color = hsv_to_rgb(f32(len(doc.tags)) * 55, 0.6, 0.9),
-		}
-		name_set(&t.name, fmt.tprintf("Tag %d", len(doc.tags) + 1))
-		append(&doc.tags, t)
-	}
-	ok, _ := dialog_buttons(c, "Close", "")
-	if ok {
-		doc.modified = true
-		dialog_close()
-	}
-}
-
 dlg_adjust :: proc() {
 	c := dialog_frame("Hue / Saturation / Brightness", 280, 140)
 	y := c.y
 	changed := false
-	text(c.x, y + 3, "Hue", C_TEXT)
-	changed |= slider(Rect{c.x + 80, y, 170, 14}, &dialog.a, -180, 180, "")
+	HUE_TIP :: Tip{"Hue", "Turn all colors around the color wheel, by this many degrees."}
+	SAT_TIP :: Tip{"Saturation", "Make the colors more vivid, or fade them towards gray."}
+	VAL_TIP :: Tip{"Brightness", "Make the colors lighter or darker."}
+	tip_text(c.x, y + 3, "Hue", C_TEXT, HUE_TIP)
+	changed |= slider(Rect{c.x + 80, y, 170, 14}, &dialog.a, -180, 180, "", HUE_TIP)
 	y += 20
-	text(c.x, y + 3, "Saturation", C_TEXT)
-	changed |= slider(Rect{c.x + 80, y, 170, 14}, &dialog.b, -100, 100, "")
+	tip_text(c.x, y + 3, "Saturation", C_TEXT, SAT_TIP)
+	changed |= slider(Rect{c.x + 80, y, 170, 14}, &dialog.b, -100, 100, "", SAT_TIP)
 	y += 20
-	text(c.x, y + 3, "Brightness", C_TEXT)
-	changed |= slider(Rect{c.x + 80, y, 170, 14}, &dialog.c, -100, 100, "")
+	tip_text(c.x, y + 3, "Brightness", C_TEXT, VAL_TIP)
+	changed |= slider(Rect{c.x + 80, y, 170, 14}, &dialog.c, -100, 100, "", VAL_TIP)
 	if changed && dialog.orig != nil {
 		pix := cel_write(doc, doc.active_layer, doc.active_frame)
 		edit_adjust(dialog.orig, pix, dialog.a, dialog.b, dialog.c)
 		doc_touch(doc)
 	}
-	ok, cancel := dialog_buttons(c)
+	ok, cancel := dialog_buttons(c, "Keep these colors (Enter). You can undo it.")
 	if cancel {
 		pix := cel_write(doc, doc.active_layer, doc.active_frame)
 		copy(pix, dialog.orig)
@@ -496,27 +440,29 @@ dlg_export :: proc() {
 	h: i32 = 150
 	c := dialog_frame("Export", 290, h)
 	y := c.y
-	text(c.x, y + 3, "Format", C_TEXT)
-	nv, ch := combo(Rect{c.x + 80, y, 170, 14}, export_format_names(), fmt_idx)
+	FORMAT_TIP :: "PNG saves the current frame. A sprite sheet puts all frames in one PNG, a PNG sequence saves one file per frame, and a GIF plays as an animation."
+	tip_text(c.x, y + 3, "Format", C_TEXT, {"Format", FORMAT_TIP})
+	nv, ch := combo(Rect{c.x + 80, y, 170, 14}, export_format_names(), fmt_idx, {"Format", FORMAT_TIP})
 	if ch {
 		fmt_idx = nv
 	}
 	y += 22
-	row_int(c, y, "Scale", &dialog.a, 1, 32)
+	row_int(c, y, "Scale", &dialog.a, 1, 32, "How many pixels wide and tall each sprite pixel is in the file. Pixels stay sharp.")
 	text(c.x + 190, y + 3, "x", C_TEXT_DIM)
 	y += 22
 	format := Export_Format(fmt_idx)
 	#partial switch format {
 	case .Sheet:
-		text(c.x, y + 3, "Layout", C_TEXT)
-		combo_enum(Rect{c.x + 80, y, 170, 14}, SHEET_LAYOUT_NAMES, &export_layout)
+		LAYOUT_TIP :: "How the frames are arranged in the image: in one row, in one column, or in a grid that is about square."
+		tip_text(c.x, y + 3, "Layout", C_TEXT, {"Layout", LAYOUT_TIP})
+		combo_enum(Rect{c.x + 80, y, 170, 14}, SHEET_LAYOUT_NAMES, &export_layout, {"Layout", LAYOUT_TIP})
 	case .GIF:
-		checkbox(c.x, y, "Loop forever", &export_gif_loop)
+		checkbox(c.x, y, "Loop forever", &export_gif_loop, {"Loop forever", "On: the GIF keeps repeating. Off: it plays once and stops on the last frame."})
 	}
 	if format != .PNG && len(doc.tags) > 0 && play_tag >= 0 {
-		checkbox(c.x, y + 16, "Only the selected tag", &export_range_tag)
+		checkbox(c.x, y + 16, "Only the selected tag", &export_range_tag, {"Only the selected tag", "Export just the frames of the tag picked in the timeline, not the whole animation."})
 	}
-	ok, cancel := dialog_buttons(c, "Export")
+	ok, cancel := dialog_buttons(c, "Choose where to save it (Enter).", "Export")
 	if cancel {
 		dialog_close()
 	}
@@ -540,10 +486,10 @@ dlg_import_sheet :: proc() {
 	y := c.y
 	text(c.x, y + 3, "Slice the image into frames", C_TEXT_DIM)
 	y += 18
-	row_int(c, y, "Frame width", &dialog.a, 1, 8192)
+	row_int(c, y, "Frame width", &dialog.a, 1, 8192, "The width of one frame in the sheet, in pixels.")
 	y += 20
-	row_int(c, y, "Frame height", &dialog.b, 1, 8192)
-	ok, cancel := dialog_buttons(c, "Import")
+	row_int(c, y, "Frame height", &dialog.b, 1, 8192, "The height of one frame in the sheet, in pixels.")
+	ok, cancel := dialog_buttons(c, "Slice the image and open it as a new sprite with one frame per slice (Enter).", "Import")
 	if cancel {
 		dialog_close()
 	}
@@ -556,11 +502,15 @@ dlg_import_sheet :: proc() {
 
 dlg_confirm :: proc() {
 	d := dialog.confirm_doc
+	if d == nil { 	// --dialog opens this window with no sprite to ask about
+		dialog_close()
+		return
+	}
 	c := dialog_frame("Unsaved Changes", 300, 90)
 	text(c.x, c.y + 2, fmt.tprintf("Save changes to \"%s\"?", name_str(&d.title)), C_TEXT)
-	y := c.y + c.h - 16
+	y := c.y + c.h - 18
 	proceed := false
-	if button(Rect{c.x, y, 70, 16}, "Save") {
+	if button_primary(Rect{c.x + c.w - 64, y, 64, 18}, "Save", {"Save", "Save your changes, then go on."}) {
 		if file_save(d, false) {
 			proceed = true
 		} else {
@@ -568,10 +518,10 @@ dlg_confirm :: proc() {
 			return
 		}
 	}
-	if button(Rect{c.x + 76, y, 90, 16}, "Don't Save") {
+	if button(Rect{c.x + c.w - 150, y, 80, 18}, "Don't Save", {"Don't Save", "Go on and lose the changes since you last saved. This can't be undone."}) {
 		proceed = true
 	}
-	if button(Rect{c.x + 172, y, 70, 16}, "Cancel") || IsKeyPressed(.ESCAPE) {
+	if button(Rect{c.x + c.w - 220, y, 64, 18}, "Cancel", {"Cancel", "Keep the sprite open and go back to it (Esc)."}) || IsKeyPressed(.ESCAPE) {
 		dialog_close()
 		return
 	}
@@ -590,14 +540,14 @@ dlg_confirm :: proc() {
 dlg_message :: proc() {
 	c := dialog_frame(name_str(&dialog.msg_title), 320, 100)
 	text(c.x, c.y + 4, name_str(&dialog.msg_text), C_TEXT)
-	ok, _ := dialog_buttons(c, "OK", "")
+	ok, _ := dialog_buttons(c, "Close this message (Enter or Esc).", "OK", "")
 	if ok {
 		dialog_close()
 	}
 }
 
 dlg_shortcuts :: proc() {
-	c := dialog_frame("Keyboard Shortcuts", 620, 350)
+	c := dialog_frame("Keyboard Shortcuts", 620, 360)
 	cols :: 3
 	col_w := c.w / cols
 	per_col := (len(SHORTCUTS) + cols - 1) / cols
@@ -608,7 +558,7 @@ dlg_shortcuts :: proc() {
 		y := c.y + i32(row) * 11
 		sc := shortcut_text_for(s)
 		text(x, y, sc, C_ACCENT)
-		name, _ := strings.replace_all(fmt.tprintf("%v", s.cmd), "_", " ", context.temp_allocator)
+		name, _ := strings.replace_all(shortcut_label(s.cmd), "_", " ", context.temp_allocator)
 		text(x + 78, y, name, C_TEXT)
 	}
 	// the tool groups' own hotkeys (set in the toolbar)
@@ -617,11 +567,11 @@ dlg_shortcuts :: proc() {
 		if g.key != .KEY_NULL do fmt.sbprintf(&sb, "%s%s %s", strings.builder_len(sb) > 0 ? "    " : "", key_name(g.key), group_title(&g))
 	}
 	if strings.builder_len(sb) > 0 {
-		text(c.x, c.y + c.h - 30, "Tool groups:", C_TEXT_DIM)
+		tip_text(c.x, c.y + c.h - 30, "Tool groups:", C_TEXT_DIM, {"Tool groups", "The hotkeys of your tool groups. They come before the shortcuts above, so a group can take over a tool's letter."})
 		text(c.x + 78, c.y + c.h - 30, strings.to_string(sb), C_ACCENT)
 	}
-	ok, _ := dialog_buttons(c, "Close", "")
-	if ok || IsKeyPressed(.ESCAPE) {
+	ok, _ := dialog_buttons(c, "Close this list (Enter or Esc).", "Close", "")
+	if ok {
 		dialog_close()
 	}
 }
@@ -637,9 +587,9 @@ dlg_about :: proc() {
 	text(tx, c.y + 6, APP_NAME, C_ACCENT)
 	text(tx, c.y + 20, APP_TAGLINE, C_TEXT_DIM)
 	text(tx, c.y + 38, "Layers, frames, tags, onion skin, selections,", C_TEXT)
-	text(tx, c.y + 50, "symmetry, tiling, palettes, GIF/PNG export.", C_TEXT)
+	text(tx, c.y + 50, "mirroring, tiling, palettes, GIF/PNG export.", C_TEXT)
 	text(tx, c.y + 68, "Written in Odin with SDL3 and OdinUI.", C_TEXT_DIM)
-	ok, _ := dialog_buttons(c, "Close", "")
+	ok, _ := dialog_buttons(c, "Close this window (Enter or Esc).", "Close", "")
 	if ok {
 		dialog_close()
 	}
@@ -648,17 +598,17 @@ dlg_about :: proc() {
 dlg_grid :: proc() {
 	c := dialog_frame("Grid Settings", 250, 176)
 	y := c.y
-	row_int(c, y, "Grid width", &dialog.a, 1, 1024)
+	row_int(c, y, "Grid width", &dialog.a, 1, 1024, "The width of one grid cell in sprite pixels.")
 	y += 20
-	row_int(c, y, "Grid height", &dialog.b, 1, 1024)
+	row_int(c, y, "Grid height", &dialog.b, 1, 1024, "The height of one grid cell in sprite pixels.")
 	y += 20
-	row_int(c, y, "Offset X", &dialog.c, 0, 1024)
+	row_int(c, y, "Offset X", &dialog.c, 0, 1024, "How far the grid is pushed right from the sprite's left edge, in pixels.")
 	y += 20
-	row_int(c, y, "Offset Y", &dialog.d, 0, 1024)
+	row_int(c, y, "Offset Y", &dialog.d, 0, 1024, "How far the grid is pushed down from the sprite's top edge, in pixels.")
 	y += 20
-	checkbox(c.x, y, "Show grid", &dialog.flag)
-	checkbox(c.x + 110, y, "Snap to grid", &dialog.flag2, "Selections, shapes and moves snap to the grid while it is shown")
-	ok, cancel := dialog_buttons(c)
+	checkbox(c.x, y, "Show grid", &dialog.flag, {"Show grid", "Draw the grid over the sprite (Ctrl+;). It is only a guide and is not part of the sprite."})
+	checkbox(c.x + 110, y, "Snap to grid", &dialog.flag2, {"Snap to grid", "Selections, shapes and moves snap to the grid while it is shown (Ctrl+Shift+;)."})
+	ok, cancel := dialog_buttons(c, "Apply these grid settings (Enter).")
 	if cancel {
 		dialog_close()
 	}
@@ -674,45 +624,23 @@ dlg_grid :: proc() {
 BG_MODE_NAMES := [?]string{"Checkerboard", "Black", "White", "Gray", "Custom color"}
 
 dlg_prefs :: proc() {
-	c := dialog_frame("Preferences", 280, 182)
+	c := dialog_frame("Preferences", 280, 110)
 	y := c.y
-	text(c.x, y + 3, "UI scale", C_TEXT)
-	if slider(Rect{c.x + 110, y, c.w - 110, 14}, &dialog.a, UI_SCALE_MIN, UI_SCALE_MAX, "", "How large the interface is drawn", "%", step = UI_SCALE_STEP) {
-		dialog.flag = false
-	}
-	y += 18
-	checkbox(c.x + 110, y, "Auto-size to the display", &dialog.flag)
-	// Takes effect as soon as the slider is let go, not while it is dragged: the dialog itself
-	// changes size and would move the slider out from under the mouse.
-	if dialog.flag {
-		ui_scale_pref = 0
-		dialog.a = ui_scale_wanted()
-	} else if !ui.down[0] {
-		ui_scale_pref = dialog.a
-	}
-	y += 16
-	if fit := ui_scale_fit(int(gfx.pw), int(gfx.ph)); dialog.a > fit {
-		text(c.x + 110, y + 3, fmt.tprintf("This window fits up to %d%%", fit), C_TEXT_DIM)
-	}
-	y += 20
-	text(c.x, y + 3, "Canvas background", C_TEXT)
-	nv2, ch2 := combo(Rect{c.x + 110, y, 100, 14}, BG_MODE_NAMES[:], dialog.b)
+	BG_TIP :: "What shows behind transparent pixels. It is only a guide and is not part of the sprite."
+	tip_text(c.x, y + 3, "Canvas background", C_TEXT, {"Canvas background", BG_TIP})
+	nv2, ch2 := combo(Rect{c.x + 110, y, 100, 14}, BG_MODE_NAMES[:], dialog.b, {"Canvas background", BG_TIP})
 	if ch2 {
 		dialog.b = nv2
 	}
-	y += 22
-	checkbox(c.x, y, "Show pixel grid when zoomed in", &opts.pixel_grid)
+	y += 20
+	checkbox(c.x, y, "Show pixel grid when zoomed in", &opts.pixel_grid, {"Pixel grid", "Draw thin lines between the sprite's pixels when zoomed in far enough (Ctrl+Shift+')."})
 	y += 16
-	checkbox(c.x, y, "Show symmetry guides", &opts.sym_guides)
-	ok, cancel := dialog_buttons(c)
+	checkbox(c.x, y, "Show mirror guides", &opts.sym_guides, {"Mirror guides", "Draw the lines that drawing is mirrored across, while Mirror is on."})
+	ok, cancel := dialog_buttons(c, "Keep these settings (Enter).")
 	if cancel {
-		ui_scale_pref = dialog.c
 		dialog_close()
 	}
 	if ok {
-		if !dialog.flag {
-			ui_scale_pref = dialog.a
-		}
 		bg_mode = dialog.b
 		dialog_close()
 	}
@@ -721,10 +649,10 @@ dlg_prefs :: proc() {
 dlg_outline :: proc() {
 	c := dialog_frame("Outline", 250, 110)
 	y := c.y
-	text(c.x, y + 3, "Adds an outline using the foreground colour", C_TEXT_DIM)
+	text(c.x, y + 3, "Adds an outline using the foreground color", C_TEXT_DIM)
 	y += 18
-	checkbox(c.x, y, "Include diagonals", &dialog.flag)
-	ok, cancel := dialog_buttons(c)
+	checkbox(c.x, y, "Include diagonals", &dialog.flag, {"Include diagonals", "Also fill pixels that only touch a drawn pixel at a corner, for a thicker, rounder outline."})
+	ok, cancel := dialog_buttons(c, "Draw the outline on the current layer (Enter). You can undo it.")
 	if cancel {
 		dialog_close()
 	}
@@ -737,17 +665,22 @@ dlg_outline :: proc() {
 dlg_replace :: proc() {
 	c := dialog_frame("Replace Color", 270, 130)
 	y := c.y
-	text(c.x, y + 3, "Replace", C_TEXT)
-	fill_rect(Rect{c.x + 70, y, 30, 14}, dialog.col_a)
-	outline_rect(Rect{c.x + 70, y, 30, 14}, C_BORDER)
-	text(c.x + 108, y + 3, "with", C_TEXT)
-	fill_rect(Rect{c.x + 140, y, 30, 14}, dialog.col_b)
-	outline_rect(Rect{c.x + 140, y, 30, 14}, C_BORDER)
+	FROM_TIP :: Tip{"Color to replace", "The foreground color when this window opened."}
+	TO_TIP :: Tip{"New color", "The background color when this window opened."}
+	tip_text(c.x, y + 3, "Replace", C_TEXT, FROM_TIP)
+	from_r, to_r := Rect{c.x + 70, y, 30, 14}, Rect{c.x + 140, y, 30, 14}
+	fill_rect(from_r, dialog.col_a)
+	outline_rect(from_r, C_BORDER)
+	tip_area(from_r, "from", FROM_TIP)
+	tip_text(c.x + 108, y + 3, "with", C_TEXT, TO_TIP)
+	fill_rect(to_r, dialog.col_b)
+	outline_rect(to_r, C_BORDER)
+	tip_area(to_r, "to", TO_TIP)
 	y += 20
 	text(c.x, y + 3, "(from foreground and background colors)", C_TEXT_DIM)
 	y += 18
-	row_int(c, y, "Tolerance", &dialog.a, 0, 255)
-	ok, cancel := dialog_buttons(c)
+	row_int(c, y, "Tolerance", &dialog.a, 0, 255, "How far a color may be from the one to replace and still count. 0 replaces only exact matches.")
+	ok, cancel := dialog_buttons(c, "Replace the color on the current layer (Enter). You can undo it.")
 	if cancel {
 		dialog_close()
 	}
@@ -782,7 +715,7 @@ request_quit :: proc() {
 	want_quit = true
 }
 
-// Canvas background: checkerboard or any solid colour. Changes apply immediately.
+// Canvas background: checkerboard or any solid color. Changes apply immediately.
 CANVAS_BG_PRESETS := [?]u32{
 	0x000000, 0x202028, 0x3a3a46, 0x808080, 0xc0c0c0, 0xffffff,
 	0x1e2a44, 0x2b4a3a, 0x5a3a3a, 0xf0e6d2, 0xff00ff, 0x00b4a0,
@@ -798,6 +731,7 @@ dlg_canvas_bg :: proc() {
 	cb := Rect{c.x, y, 38, 20}
 	draw_checker(cb, 4)
 	outline_rect(cb, bg_mode == 0 ? C_ACCENT : C_BORDER)
+	tip_area(cb, "checkers", {"Checkerboard", "The usual pattern for showing what is transparent."})
 	if ui_hover(cb) && ui.pressed[0] {
 		bg_mode = 0
 	}
@@ -812,6 +746,7 @@ dlg_canvas_bg :: proc() {
 		fill_rect(sr, pc)
 		active := bg_mode == 4 && bg_custom.r == pc.r && bg_custom.g == pc.g && bg_custom.b == pc.b
 		outline_rect(sr, active ? C_ACCENT : C_BORDER)
+		tip_area(sr, "bg-preset", {color_hex(pc), "Use this color behind transparent pixels."})
 		if ui_hover(sr) && ui.pressed[0] {
 			bg_custom = pc
 			bg_mode = 4
@@ -820,14 +755,15 @@ dlg_canvas_bg :: proc() {
 	}
 	y += 56
 
-	// hex entry + shortcuts to existing colours
-	text(c.x, y + 3, "Color (hex)", C_TEXT)
+	// hex entry + shortcuts to existing colors
+	HEX_TIP :: Tip{"Background color", "Type a color as a hex code: RRGGBB."}
+	tip_text(c.x, y + 3, "Color (hex)", C_TEXT, HEX_TIP)
 	hr := Rect{c.x + 76, y, 70, 14}
 	hid := make_id(hr, "text")
 	if ui.focus_id != hid && bg_mode == 4 {
 		name_set(&dialog.name, color_hex(Color{bg_custom.r, bg_custom.g, bg_custom.b, 255}))
 	}
-	ch, sub := text_field(hr, &dialog.name, "RRGGBB")
+	ch, sub := text_field(hr, &dialog.name, HEX_TIP)
 	if ch || sub {
 		if pc, ok := parse_hex(name_str(&dialog.name)); ok {
 			bg_custom = Color{pc.r, pc.g, pc.b, 255}
@@ -837,21 +773,22 @@ dlg_canvas_bg :: proc() {
 	sw := Rect{c.x + 152, y, 22, 14}
 	fill_rect(sw, Color{bg_custom.r, bg_custom.g, bg_custom.b, 255})
 	outline_rect(sw, C_BORDER)
+	tip_area(sw, "bg-now", {"Custom color", "The solid color chosen for the background."})
 	y += 22
-	if button(Rect{c.x, y, 140, 16}, "Use foreground color") {
+	if button(Rect{c.x, y, 140, 16}, "Use foreground color", {"", "Put the foreground color behind transparent pixels."}) {
 		bg_custom = Color{fg.r, fg.g, fg.b, 255}
 		bg_mode = 4
 		name_set(&dialog.name, color_hex(bg_custom))
 	}
-	if button(Rect{c.x + 146, y, 134, 16}, "Use background color") {
+	if button(Rect{c.x + 146, y, 134, 16}, "Use background color", {"", "Put the background color behind transparent pixels."}) {
 		bg_custom = Color{bg.r, bg.g, bg.b, 255}
 		bg_mode = 4
 		name_set(&dialog.name, color_hex(bg_custom))
 	}
 	y += 22
-	checkbox(c.x, y, "Show background behind transparent pixels", &opts.show_checks)
-	ok, _ := dialog_buttons(c, "Close", "")
-	if ok || IsKeyPressed(.ESCAPE) {
+	checkbox(c.x, y, "Show background behind transparent pixels", &opts.show_checks, {"", "Off: transparent pixels show the color around the canvas instead."})
+	ok, _ := dialog_buttons(c, "Close this window (Enter or Esc). The background is already applied.", "Close", "")
+	if ok {
 		dialog_close()
 	}
 }

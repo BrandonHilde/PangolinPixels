@@ -54,12 +54,6 @@ recent_push :: proc(c: Color) {
 status_msg: Name
 status_t: f32
 
-// Playback
-playing: bool
-play_timer: f32
-play_dir: int = 1
-play_tag: int = -1 // -1 = whole animation
-
 // UI toggles
 canvas_mode := false // Tab: hide the side panels, tabs, timeline and status bar, leaving only the top bars
 show_preview := true
@@ -196,72 +190,6 @@ set_frame :: proc(f: int) {
 		curve_commit()
 		doc.active_frame = nf
 		doc.comp_dirty = true
-	}
-}
-
-stop_playback :: proc() {
-	playing = false
-	play_timer = 0
-	play_dir = 1
-}
-
-// Range of frames used for playback.
-play_range :: proc() -> (lo, hi: int, dir: Tag_Dir) {
-	lo, hi = 0, len(doc.frames) - 1
-	dir = .Forward
-	if play_tag >= 0 && play_tag < len(doc.tags) {
-		t := doc.tags[play_tag]
-		lo = clamp(t.from, 0, len(doc.frames) - 1)
-		hi = clamp(t.to, lo, len(doc.frames) - 1)
-		dir = t.dir
-	}
-	return
-}
-
-playback_update :: proc(dt: f32) {
-	if !playing {
-		return
-	}
-	lo, hi, dir := play_range()
-	if lo == hi {
-		set_frame(lo)
-		return
-	}
-	play_timer += dt
-	for {
-		dur := f32(max(doc.frames[doc.active_frame].duration, 10)) / 1000
-		if play_timer < dur {
-			break
-		}
-		play_timer -= dur
-		f := doc.active_frame
-		if f < lo || f > hi {
-			f = dir == .Reverse ? hi : lo
-			set_frame(f)
-			continue
-		}
-		switch dir {
-		case .Forward:
-			f += 1
-			if f > hi {
-				f = lo
-			}
-		case .Reverse:
-			f -= 1
-			if f < lo {
-				f = hi
-			}
-		case .Ping_Pong:
-			f += play_dir
-			if f > hi {
-				play_dir = -1
-				f = hi - 1
-			} else if f < lo {
-				play_dir = 1
-				f = lo + 1
-			}
-		}
-		set_frame(f)
 	}
 }
 

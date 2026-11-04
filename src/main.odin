@@ -6,50 +6,6 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 
-// The UI scale, as a percentage. Below 100% the text is unreadable; above it, steps of a quarter
-// keep the sizes of text and icons close to whole numbers of pixels.
-UI_SCALE_MIN :: 100
-UI_SCALE_MAX :: 400
-UI_SCALE_STEP :: 25
-
-// The layout needs this much room, in logical units.
-UI_MIN_W :: 900
-UI_MIN_H :: 560
-
-ui_scale_round :: proc(pct: f32) -> int {
-	return clamp(int(math.round(pct / UI_SCALE_STEP)) * UI_SCALE_STEP, UI_SCALE_MIN, UI_SCALE_MAX)
-}
-
-// The size that suits a display: as large as leaves the whole screen 1280 x 720 logical units, so the
-// interface takes up about the same share of any monitor, or more if the operating system is set to
-// enlarge everything.
-ui_scale_auto :: proc(display_w, display_h, os_scale: f32) -> int {
-	return ui_scale_round(max(min(display_w / 1280, display_h / 720), os_scale) * 100)
-}
-
-// A value from the settings file or --scale. 0 is auto; 1-4 are whole multiples, as settings
-// saved before the scale became a percentage have it.
-ui_scale_parse :: proc(v: int) -> int {
-	if v <= 0 {
-		return 0
-	}
-	return ui_scale_round(f32(v <= 4 ? v * 100 : v))
-}
-
-// What the user picked, or what suits the display the window is on.
-ui_scale_wanted :: proc() -> int {
-	if ui_scale_pref > 0 {
-		return ui_scale_pref
-	}
-	return ui_scale_auto(gfx_display_info())
-}
-
-// The largest scale that leaves the layout the room it needs in a window of this size.
-ui_scale_fit :: proc(sw, sh: int) -> int {
-	pct := min(sw * 100 / UI_MIN_W, sh * 100 / UI_MIN_H)
-	return max(pct / UI_SCALE_STEP * UI_SCALE_STEP, UI_SCALE_MIN)
-}
-
 // Builds a small sample sprite so the UI can be inspected without user input.
 demo_setup :: proc() {
 	d := doc
@@ -108,6 +64,13 @@ main :: proc() {
 		btn:   int,
 	}
 	clicks := make([dynamic]Script_Click)
+	hover: Script_Click // moves the pointer without clicking, for checking tooltips with --shot
+	Script_Drag :: struct {
+		frame:    int,
+		from, to: Vec2,
+	}
+	drags := make([dynamic]Script_Drag)
+	files_arg := ""
 	open_args := make([dynamic]string)
 	args := os.args
 	for i := 1; i < len(args); i += 1 {
@@ -117,8 +80,7 @@ main :: proc() {
 			shot_path = args[i + 1]
 			i += 1
 		case a == "--scale" && i + 1 < len(args):
-			v, _ := strconv.parse_int(args[i + 1])
-			ui_scale_pref = ui_scale_parse(v)
+			if v, ok := strconv.parse_int(args[i + 1]); ok && v > 0 do ui_scale_arg = ui_scale_parse(v)
 			i += 1
 		case a == "--size" && i + 1 < len(args):
 			wh := strings.split(args[i + 1], "x", context.temp_allocator)
@@ -155,6 +117,35 @@ main :: proc() {
 				append(&clicks, Script_Click{f, {x, y}, len(xy) > 2 && xy[2] == "r" ? 1 : 0})
 			}
 			i += 1
+		case a == "--drag" && i + 1 < len(args):
+			// "frame:x0,y0,x1,y1;...": press at the first point on that frame, move to the second over the
+			// next few frames and release there, for checking drags with --shot
+			for part in strings.split(args[i + 1], ";", context.temp_allocator) {
+				fp := strings.split(part, ":", context.temp_allocator)
+				if len(fp) != 2 do continue
+				xy := strings.split(fp[1], ",", context.temp_allocator)
+				if len(xy) != 4 do continue
+				v: [4]f32
+				for s, k in xy do v[k], _ = strconv.parse_f32(s)
+				f, _ := strconv.parse_int(fp[0])
+				append(&drags, Script_Drag{f, {v[0], v[1]}, {v[2], v[3]}})
+			}
+			i += 1
+		case a == "--files" && i + 1 < len(args):
+			files_arg = args[i + 1] // the system's folder picker can't be scripted
+			i += 1
+		case a == "--hover" && i + 1 < len(args):
+			// "frame:x,y": from that frame on, the pointer rests there
+			fp := strings.split(args[i + 1], ":", context.temp_allocator)
+			if len(fp) == 2 {
+				xy := strings.split(fp[1], ",", context.temp_allocator)
+				if len(xy) == 2 {
+					hover.frame, _ = strconv.parse_int(fp[0])
+					hover.pos.x, _ = strconv.parse_f32(xy[0])
+					hover.pos.y, _ = strconv.parse_f32(xy[1])
+				}
+			}
+			i += 1
 		case a == "--selftest":
 			os.exit(selftest())
 		case:
@@ -170,8 +161,13 @@ main :: proc() {
 	pen_init()
 
 	tool_groups_default()
+	bottom_mode = .Animation
 	if shot_path == "" {
 		prefs_load()
+	}
+	if files_arg != "" {
+		files_set_dir(files_arg)
+		bottom_mode = .Files
 	}
 	render_init()
 	brand_init()
@@ -212,14 +208,29 @@ main :: proc() {
 				gfx.m_released[c.btn], gfx.m_down[c.btn] = true, false
 			}
 		}
+		for d in drags {
+			DRAG_STEPS :: 6
+			switch f := frame_no - d.frame; {
+			case f >= -2 && f < 0:
+				gfx.mouse = d.from
+			case f == 0:
+				gfx.mouse = d.from
+				gfx.m_pressed[0], gfx.m_down[0] = true, true
+			case f > 0 && f <= DRAG_STEPS:
+				gfx.mouse = d.from + (d.to - d.from) * f32(f) / DRAG_STEPS
+			case f == DRAG_STEPS + 1:
+				gfx.mouse = d.to
+				gfx.m_released[0], gfx.m_down[0] = true, false
+			}
+		}
+		if hover.frame > 0 && frame_no >= hover.frame do gfx.mouse = hover.pos
 		if gfx.quit {
 			gfx.quit = false
 			request_quit()
 		}
 
 		sw, sh := int(gfx.pw), int(gfx.ph)
-		// never let the logical resolution drop below what the layout needs
-		ui.scale = f32(min(ui_scale_wanted(), ui_scale_fit(sw, sh))) / 100
+		ui.scale = f32(ui_scale_wanted()) / 100
 		if ui.scale != gfx.scale {
 			views_rescale(gfx.scale, ui.scale)
 		}
@@ -249,6 +260,7 @@ main :: proc() {
 		oui_end_frame()
 		oui_render()
 		dialogs_run()
+		dialog_frame_end()
 		popup_run()
 		files_drag_run()
 		tooltip_draw()

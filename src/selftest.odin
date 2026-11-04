@@ -501,7 +501,7 @@ selftest :: proc() -> int {
 		bytes.buffer_write(&img.pixels, slice.to_bytes(src[:]))
 		out: bytes.Buffer
 		err := qoi.save_to_buffer(&out, &img)
-		qp, qw, qh, qok := decode_image(bytes.buffer_to_bytes(&out), ".qoi")
+		qp, qw, qh, qok := decode_image(bytes.buffer_to_bytes(&out))
 		check(err == nil && qok && qw == 2 && qh == 2 && slice.equal(qp, src[:]), "qoi decodes")
 		delete(qp)
 		bytes.buffer_destroy(&out)
@@ -511,22 +511,63 @@ selftest :: proc() -> int {
 	selftest_tool_groups()
 
 	// --- UI scale ---
-	check(ui_scale_auto(1920, 1080, 1) == 150, "auto scale on a 1080p display")
+	check(ui_scale_auto(1920, 1080, 1) == 150, "a 1080p display gets 150%")
 	check(ui_scale_auto(2560, 1440, 1) == 200, "auto scale on a 1440p display")
 	check(ui_scale_auto(3840, 2160, 1) == 300, "auto scale on a 4K display")
 	check(ui_scale_auto(2560, 1600, 1) == 200, "auto scale on a 16:10 display goes by its width")
 	check(ui_scale_auto(3440, 1440, 1) == 200, "auto scale on an ultrawide display goes by its height")
 	check(ui_scale_auto(1366, 768, 1) == 100, "auto scale never goes below 100%")
-	check(ui_scale_auto(15360, 8640, 1) == 400, "auto scale stops at the slider's maximum")
+	check(ui_scale_auto(15360, 8640, 1) == UI_SCALE_MAX, "auto scale stops at the slider's maximum")
 	check(ui_scale_auto(2560, 1440, 2.5) == 250, "auto scale follows a larger OS scale")
 	check(ui_scale_parse(0) == 0, "a saved scale of 0 stays auto")
 	check(ui_scale_parse(2) == 200, "a saved 2x from older settings reads as 200%")
 	check(ui_scale_parse(150) == 150, "a saved percentage is kept")
-	check(ui_scale_parse(137) == 125, "a saved percentage lands on a slider step")
+	check(ui_scale_parse(137) == 137, "a saved percentage between steps is kept")
 	check(ui_scale_parse(9000) == UI_SCALE_MAX, "a saved percentage stays in range")
-	check(ui_scale_fit(1632, 918) == 150, "a window limits the scale to what fits its layout")
-	check(ui_scale_fit(900, 560) == 100, "the smallest window fits 100%")
-	check(ui_scale_fit(300, 200) == 100, "the scale never drops below 100%, however small the window")
+	ui_scale_pref, ui_scale_arg = 150, 300
+	check(ui_scale_wanted() == 300, "--scale wins over the saved scale")
+	ui_scale_pref, ui_scale_arg = 150, 0
+	check(ui_scale_wanted() == 150, "the saved scale is used without --scale")
+	ui_scale_pref = 0
+
+	// --- shortcuts and tooltips ---
+	check(shortcut_text(.Tool_Rect) == "R" && shortcut_text(.Tool_Curve) == "P", "rectangle is R, curve is P")
+	check(shortcut_text(.Toggle_Grid) == "Ctrl+;" && shortcut_text(.Toggle_Snap) == "Ctrl+Shift+;", "grid and snap share the ; key")
+	check(shortcut_text(.Layer_New) == "Ctrl+Shift+N" && shortcut_text(.Layer_Dup) == "Ctrl+J", "layer shortcuts")
+	shortcut_is :: proc(c: Cmd, k: KeyboardKey, ctrl, shift, alt: bool) -> bool {
+		for s in SHORTCUTS {
+			if s.cmd == c && s.key == k && s.ctrl == ctrl && s.shift == shift && s.alt == alt do return true
+		}
+		return false
+	}
+	check(shortcut_is(.Layer_New, .N, false, true, false), "Shift+N stays as a second key for New Layer")
+	check(shortcut_is(.Frame_First, .HOME, false, false, false) && shortcut_is(.Frame_First, .COMMA, false, true, false), "first frame: Home and Shift+,")
+	check(shortcut_is(.Frame_Last, .END, false, false, false) && shortcut_is(.Frame_Last, .PERIOD, false, true, false), "last frame: End and Shift+.")
+	clashes := 0
+	for a, i in SHORTCUTS {
+		for b in SHORTCUTS[i + 1:] {
+			if a.key == b.key && a.ctrl == b.ctrl && a.shift == b.shift && a.alt == b.alt do clashes += 1
+		}
+	}
+	check(clashes == 0, "no two commands share a key")
+	missing := 0
+	for c in Cmd {
+		if c != .None && cmd_help(c) == "" do missing += 1
+	}
+	check(missing == 0, "every command has tooltip text")
+	for t in Tool do check(TOOL_HELP[t] != "", fmt.tprintf("tool %v has tooltip text", t))
+	for t in Tool do if !tool_is_toggle(t) do check(TOOL_HINT[t] != "", fmt.tprintf("tool %v has a status bar hint", t))
+	for p in Pattern do check(PATTERN_HELP[p] != "", fmt.tprintf("pattern %v has tooltip text", p))
+	for k in Filter_Kind do check(FILTER_HELP[k] != "", fmt.tprintf("filter %v has tooltip text", k))
+	for title in MENU_TITLES do check(menu_title_tip(title).desc != "", fmt.tprintf("menu %s has tooltip text", title))
+
+	// --- layer opacity in percent ---
+	check(opacity_percent(255) == 100 && opacity_percent(0) == 0, "opacity ends")
+	stable := true
+	for p in 0 ..= 100 {
+		if opacity_percent(opacity_from_percent(p)) != p do stable = false
+	}
+	check(stable, "every percentage survives the trip through the stored value")
 
 	fmt.printf("== %d failures ==\n", fails)
 	return fails
@@ -672,6 +713,41 @@ selftest_tool_groups :: proc() {
 	tool_group_remove(0)
 	check(opts.brush_size == 2 && active_group == -1, "removing an own-settings group brings the shared ones back")
 
+	// the pen's eraser end: a group can serve it, apart from the pen tip's tool
+	tool_groups_default()
+	select_tool_in_group(.Lasso)
+	group_set_pen_eraser(0)
+	group_set_pen_eraser(1)
+	check(!tool_groups[0].pen_eraser && tool_groups[1].pen_eraser, "only one group serves the pen eraser")
+	tool_groups[1].last = .Rect
+	pen_saved := pen
+	pen.in_range, pen.eraser = true, true
+	t_pen, has_pen := pen_eraser_group_tool()
+	check(has_pen && t_pen == .Rect && eff_tool() == .Rect && cur_tool == .Lasso, "the eraser end uses that group's tool, the pen tip keeps its own")
+	tool_group_activate(1)
+	check(tool_groups[1].last == .Ellipse && cur_tool == .Lasso, "the group's hotkey only changes the eraser end's tool")
+	select_tool_in_group(.Line)
+	check(current_group() == -1, "the eraser's group does not hold the pen tip's tool")
+	pen = pen_saved
+	check(eff_tool() == .Line, "the pen tip works as before")
+	saved = tool_groups_serialize()
+	tool_groups_parse(saved)
+	check(tool_groups[1].pen_eraser && !tool_groups[0].pen_eraser, "the pen eraser group is saved with the groups")
+	tool_groups_parse("49:0,1:::Old:")
+	check(len(tool_groups) == 1 && !tool_groups[0].pen_eraser && name_str(&tool_groups[0].name) == "Old", "groups saved before the pen eraser option still load")
+	tool_groups_parse("49:0,1:::A::1;50:2:::B::1")
+	check(tool_groups[0].pen_eraser && !tool_groups[1].pen_eraser, "at most one group loads as the pen eraser's")
+	group_set_pen_eraser(0)
+	check(!tool_groups[0].pen_eraser, "choosing it again clears it")
+	tool_groups_default()
+	pen.in_range, pen.eraser = true, true
+	select_tool_in_group(.Pencil)
+	check(eff_tool() == .Eraser, "with no such group the eraser end erases with a drawing tool")
+	select_tool_in_group(.Lasso)
+	check(eff_tool() == .Lasso, "and leaves other tools alone")
+	pen = pen_saved
+	select_tool_in_group(.Pencil)
+
 	// workspaces
 	workspace_builtin(3)
 	check(len(tool_groups) == 4 && tool_groups[0].own && tool_groups[0].brush.pixel_perf && len(tool_groups[2].patterns) == 4, "Shading workspace")
@@ -740,6 +816,19 @@ selftest_files :: proc() {
 		return fmt.tprintf("%s/%s", dir, name)
 	}
 
+	// --- the settings file and its older names ---
+	sdir := fmt.tprintf("%s/", dir)
+	check(prefs_find(sdir) == "", "no settings file yet")
+	write_file(join(dir, "pixel.cfg"), transmute([]u8)string("x"))
+	check(prefs_find(sdir) == join(dir, "pixel.cfg"), "the oldest settings file is read if it is the only one")
+	write_file(join(dir, "pangolin.cfg"), transmute([]u8)string("x"))
+	check(prefs_find(sdir) == join(dir, "pangolin.cfg"), "pangolin.cfg comes before pixel.cfg")
+	write_file(join(dir, "pixels.cfg"), transmute([]u8)string("x"))
+	check(prefs_find(sdir) == join(dir, "pixels.cfg"), "pixels.cfg comes first")
+	os.remove(join(dir, "pixel.cfg"))
+	os.remove(join(dir, "pangolin.cfg"))
+	os.remove(join(dir, "pixels.cfg"))
+
 	// --- the folder listing ---
 	green := Color{0, 255, 0, 255}
 	small := make([]Color, 4 * 2, context.temp_allocator)
@@ -751,6 +840,7 @@ selftest_files :: proc() {
 	os.make_directory(join(dir, "sub"))
 	files_set_dir(dir)
 	check(len(files) == 3, "file browser lists images and folders only")
+	check(files_listed("a.WEBP") && files_listed("a.pxl") && files_listed("a.qoi") && !files_listed("a.txt") && !files_listed("a.gpl"), "file browser lists projects and all image formats")
 	if len(files) == 3 {
 		check(files[0].is_dir && files[0].name == "sub", "file browser: folders come first")
 		check(files[1].name == "A.PNG" && files[2].name == "b.png", "file browser: names sort ignoring case")
@@ -787,6 +877,15 @@ selftest_files :: proc() {
 	_, _, _, _, _, ok = thumb_load(join(dir, "bad.png"))
 	check(!ok, "unreadable images report failure")
 
+	// --- WebP goes through the shared decoder: a 1 x 1 lossless image ---
+	webp_1x1 := []u8{
+		0x52, 0x49, 0x46, 0x46, 0x1A, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4C,
+		0x0D, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xFE, 0x07, 0x00,
+	}
+	wp, ww, wh, wok := decode_image(webp_1x1)
+	check(wok && ww == 1 && wh == 1, "webp decodes")
+	if wok do delete(wp)
+
 	// --- dropping onto the canvas ---
 	d := doc_new(16, 16, "drop")
 	append(&docs, d)
@@ -805,6 +904,17 @@ selftest_files :: proc() {
 	check(cel_px(d, d.active_layer, 0, 0, 0) == green, "a drop beside the sprite still leaves part of it on the canvas")
 	import_as_layer(join(dir, "b.png"))
 	check(cel_px(d, d.active_layer, 0, 3, 1) == green && cel_px(d, d.active_layer, 0, 4, 1).a == 0, "the menu import still uses the top left corner")
+	check(files_drop_hint("a.png", false) == "Drop to add as a layer" && files_drop_hint("a.pxl", false) == "Drop to open", "a drop on the canvas says what it will do")
+	layers = len(d.layers)
+	n_docs := len(docs)
+	files_drop(join(dir, "b.png"), true)
+	check(len(docs) == n_docs + 1 && doc != d && len(d.layers) == layers, "a drop on the tabs opens the image as a new sprite")
+	close_doc(doc)
+	doc = d
+	files_drop(join(dir, "p.pxl"), false)
+	check(len(docs) == n_docs + 1 && doc != d && len(d.layers) == layers, "a project dropped on the canvas opens")
+	close_doc(doc)
+	doc = d
 	files_clear()
 	delete(files_dir)
 	files_dir = ""

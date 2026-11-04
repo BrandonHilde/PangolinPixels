@@ -8,7 +8,8 @@ import "core:strings"
 // (or the one last used from it); pressing it again cycles through the group's tools.
 // A group holding colours instead of tools is a colour group: its hotkey cycles the
 // foreground colour and leaves the tool alone. A pattern group's hotkey cycles the dither
-// pattern the same way. Switches (Grid, Symmetry, ...) sit among the tools and flip on and off.
+// pattern the same way. Switches (Grid, Mirror, ...) sit among the tools and flip on and off.
+// One group can serve the pen's eraser end instead: it keeps its own tool, apart from the pen tip's.
 
 MAX_TOOL_GROUPS :: 12
 MAX_GROUP_COLORS :: 64
@@ -35,6 +36,7 @@ Tool_Group :: struct {
 	// in use, and the other groups share theirs (`shared_brush`)
 	own:      bool,
 	brush:    Brush_Opts,
+	pen_eraser: bool, // the pen's eraser end uses this group's last tool (at most one group)
 }
 
 tool_groups: [dynamic]Tool_Group
@@ -68,7 +70,7 @@ brush_sync :: proc() {
 
 // Makes `gi` (or no group, -1) the active group, swapping brush settings when either keeps its own.
 group_enter :: proc(gi: int) {
-	if gi == active_group do return
+	if gi == active_group || (gi >= 0 && tool_groups[gi].pen_eraser) do return
 	brush_sync()
 	was_own := group_owns(active_group)
 	active_group = gi
@@ -98,11 +100,12 @@ group_set_own :: proc(gi: int, on: bool) {
 
 // Group the active tool belongs to: the active group if it holds the tool, else the first that does.
 current_group :: proc() -> int {
-	if active_group >= 0 && active_group < len(tool_groups) && tool_group_has(&tool_groups[active_group], cur_tool) {
-		return active_group
+	if active_group >= 0 && active_group < len(tool_groups) {
+		g := &tool_groups[active_group]
+		if !g.pen_eraser && tool_group_has(g, cur_tool) do return active_group
 	}
 	for &g, i in tool_groups {
-		if tool_group_has(&g, cur_tool) do return i
+		if !g.pen_eraser && tool_group_has(&g, cur_tool) do return i
 	}
 	return -1
 }
@@ -118,7 +121,7 @@ select_tool_in_group :: proc(t: Tool, gi := -1) {
 	} else if active_group < 0 || active_group >= len(tool_groups) || !tool_group_has(&tool_groups[active_group], t) {
 		found := -1
 		for &g, i in tool_groups {
-			if tool_group_has(&g, t) {
+			if !g.pen_eraser && tool_group_has(&g, t) {
 				found = i
 				break
 			}
@@ -128,11 +131,31 @@ select_tool_in_group :: proc(t: Tool, gi := -1) {
 	select_tool(t)
 }
 
+// The tool the pen's eraser end uses, if a group is assigned to it. Switches can't be drawn with.
+pen_eraser_group_tool :: proc() -> (Tool, bool) {
+	for &g in tool_groups {
+		if !g.pen_eraser do continue
+		if !tool_is_toggle(g.last) && tool_group_has(&g, g.last) do return g.last, true
+		for t in g.tools {
+			if !tool_is_toggle(t) do return t, true
+		}
+	}
+	return {}, false
+}
+
+// Makes group `gi` the pen eraser's, or none if it already is. Its brush settings stop applying to the pen tip.
+group_set_pen_eraser :: proc(gi: int) {
+	on := !tool_groups[gi].pen_eraser
+	if on && gi == active_group do group_enter(-1)
+	for &o in tool_groups do o.pen_eraser = false
+	tool_groups[gi].pen_eraser = on
+}
+
 group_title :: proc(g: ^Tool_Group) -> string {
 	if g.name.n > 0 {
 		return name_str(&g.name)
 	}
-	return "Group"
+	return g.pen_eraser ? "Pen" : "Group"
 }
 
 // Group names go into the preferences and workspace files, whose fields are split on : and ;
@@ -231,6 +254,17 @@ tool_group_activate :: proc(gi: int) {
 		if len(g.tools) > 0 do tool_toggle(g.tools[0])
 		return
 	}
+	if g.pen_eraser {
+		// only changes the pen's eraser end, never the active tool
+		for t, i in tools {
+			if t == g.last {
+				g.last = tools[(i + 1) % n]
+				return
+			}
+		}
+		g.last = tools[0]
+		return
+	}
 	// pressing the hotkey again moves on to the group's next tool
 	for t, i in tools {
 		if t == cur_tool && current_group() == gi {
@@ -309,9 +343,10 @@ pattern_in :: proc(list: []Pattern, p: Pattern) -> bool {
 	return false
 }
 
-// Preferences and workspaces: groups separated by ;, each "<key>:<tools>:<colours>:<patterns>:<name>:<brush>"
-// with tools and patterns as enum indices, colours as hex, and <brush> the group's own settings
-// (size,round,pixel-perfect,fill,pattern,ink,density) or empty.
+// Preferences and workspaces: groups separated by ;, each "<key>:<tools>:<colours>:<patterns>:<name>:<brush>:<pen>"
+// with tools and patterns as enum indices, colours as hex, <brush> the group's own settings
+// (size,round,pixel-perfect,fill,pattern,ink,density) or empty, and <pen> 1 for the pen eraser's group.
+// <pen> is only written when set, so other groups read the same as in older files.
 tool_groups_serialize :: proc() -> string {
 	brush_sync()
 	sb := strings.builder_make(context.temp_allocator)
@@ -333,6 +368,7 @@ tool_groups_serialize :: proc() -> string {
 			b := g.brush
 			fmt.sbprintf(&sb, "%d,%d,%d,%d,%d,%d,%d", b.size, int(b.round), int(b.pixel_perf), int(b.fill), int(b.pattern), int(b.ink), b.spray_dens)
 		}
+		if g.pen_eraser do fmt.sbprintf(&sb, ":1")
 	}
 	return strings.to_string(sb)
 }
@@ -387,6 +423,12 @@ tool_groups_parse :: proc(s: string) {
 				spray_dens = clamp(v[6], 1, 100),
 			}
 		}
+		if len(fields) > 6 && fields[6] == "1" {
+			// at most one: the first in the file keeps it
+			taken := false
+			for &o in tool_groups do taken ||= o.pen_eraser
+			g.pen_eraser = !taken
+		}
 		for t in g.tools {
 			if !tool_is_toggle(t) {
 				g.last = t
@@ -423,7 +465,7 @@ panel_groups_bar :: proc(r: Rect) {
 	hline(r.x, r.y, r.w, C_BORDER)
 	ty := r.y + (r.h - FONT_CAP) / 2
 	x := r.x + 10
-	text(x, ty, "Groups:", C_TEXT_DIM)
+	tip_text(x, ty, "Groups:", C_TEXT_DIM, {"Tool groups", "Each one shows its hotkey and what it picks now. Press Tab to bring the full interface back."})
 	x += text_w("Groups:") + 10
 	limit := r.x + r.w - 10
 	if status_t > 0 {
@@ -441,7 +483,10 @@ panel_groups_bar :: proc(r: Rect) {
 		switch {
 		case len(g.tools) > 0:
 			kind = 1
-			if current_group() == gi {
+			if g.pen_eraser {
+				shown, _ = pen_eraser_group_tool()
+				active = pen_eraser_active()
+			} else if current_group() == gi {
 				shown, active = cur_tool, true
 			} else if tool_group_has(&g, g.last) && !tool_is_toggle(g.last) {
 				shown = g.last
@@ -473,7 +518,16 @@ panel_groups_bar :: proc(r: Rect) {
 		cw := 8 + label_w + 6 + text_w(ARROW) + 6 + target_w + 8
 		if x + cw > limit do break
 		cell := Rect{x, r.y + 3, cw, r.h - 6}
-		tip := key == "" ? title : fmt.tprintf("%s (%s)", title, key)
+		desc := ""
+		switch kind {
+		case 1:
+			desc = g.pen_eraser ? "The tool on the pen's eraser end. Click or press the key to step through this group's tools." : "Click or press the key to pick this group's tool. Again steps to its next tool."
+		case 2:
+			desc = "Click or press the key to make the group's next color the foreground color."
+		case 3:
+			desc = "Click or press the key to change to the group's next dither pattern."
+		}
+		tip := Tip{key == "" ? title : fmt.tprintf("%s (%s)", title, key), desc}
 		clicked, _, hover := button_behavior(make_id(cell, "grpcell"), cell, tip)
 		if active {
 			draw_rrect(f32(cell.x), f32(cell.y), f32(cell.w), f32(cell.h), RADIUS, C_ACCENT_TINT)
@@ -513,9 +567,10 @@ dlg_group_rename :: proc() {
 		dialog_close()
 		return
 	}
-	text(c.x, c.y + 3, "Name", C_TEXT)
-	text_field(Rect{c.x + 50, c.y, c.w - 50, 14}, &dialog.name, "Leave empty for the default name")
-	ok, cancel := dialog_buttons(c)
+	NAME_TIP :: Tip{"Group name", "The name shown above this tool group. Leave it empty for the default name."}
+	tip_text(c.x, c.y + 3, "Name", C_TEXT, NAME_TIP)
+	text_field(Rect{c.x + 50, c.y, c.w - 50, 14}, &dialog.name, NAME_TIP)
+	ok, cancel := dialog_buttons(c, "Rename the group (Enter).")
 	if cancel {
 		dialog_close()
 	}

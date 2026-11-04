@@ -6,7 +6,7 @@
  *
  *     :root { --accent: #f6aa68; --panel: #202329; }
  *     #right { width: 300px; }
- *     #body { flex-direction: row-reverse; }     (tools on the right, colours and palette on the left)
+ *     #body { flex-direction: row-reverse; }     (tools on the right, colors and palette on the left)
  */
 
 :root {
@@ -44,16 +44,16 @@
 	background: var(--bg);
 }
 
-#menubar    { height: 24px; flex: none; }
-#options    { height: 30px; flex: none; }
+#menubar    { min-height: 24px; max-height: 40vh; flex: none; overflow: hidden; }
+#options    { height: 30px; max-height: 12vh; flex: none; }
 #body       { display: flex; flex-direction: row; flex: 1; min-height: 0; }
-#toolbar    { width: 148px; flex: none; }
+#toolbar    { width: 148px; max-width: 22vw; flex: none; }
 #center     { display: flex; flex-direction: column; flex: 1; min-width: 0; height: 100%; }
-#tabs       { height: 26px; flex: none; }
+#tabs       { height: 26px; max-height: 12vh; flex: none; }
 #viewport   { flex: 1; min-height: 0; }
-#right      { width: 236px; flex: none; }
-#timeline   { height: 150px; flex: none; }
-#status     { height: 20px; flex: none; }
+#right      { width: 236px; max-width: 30vw; flex: none; }
+#timeline   { height: 150px; max-height: 35vh; flex: none; }
+#status     { height: 20px; max-height: 10vh; flex: none; }
 #groups-bar { height: 24px; flex: none; }
 
 /* areas the program draws itself (canvas, panels not built from CSS yet) */
@@ -72,17 +72,18 @@ statusbar {
 	background: var(--panel-dark);
 	border-top: 0.5px solid var(--border);
 }
-statusbar label        { color: var(--text-dim); white-space: nowrap; }
-statusbar label.strong { color: var(--text); }
+/* in a narrow window the readouts give way, and the zoom stays */
+statusbar label        { color: var(--text-dim); white-space: nowrap; min-width: 0; flex-shrink: 1; overflow: hidden; }
+statusbar label.strong { color: var(--text); flex: none; }
 statusbar label.message { color: var(--accent); }
 statusbar separator    { width: 0.5px; height: 11px; background: var(--ring-hi); }
 statusbar spacer       { flex: 1; }
-#status-tool           { width: 268px; overflow: hidden; }
-#cursor-info           { width: 140px; height: 100%; }
+#status-tool           { width: 400px; max-width: 42vw; white-space: pre; }
+#cursor-info           { width: 140px; min-width: 0; flex-shrink: 8; height: 100%; }
 
 /* ---- controls ----------------------------------------------------------------------------- */
 
-/* icons are a font: colour and size them like text */
+/* icons are a font: color and size them like text */
 .icon    { font-family: icons; font-size: 12px; line-height: 12px; }
 .icon.lg { font-size: 16px; line-height: 16px; }
 
@@ -106,10 +107,12 @@ spacer { display: block; flex: 1; }
 
 /* ---- menu bar ----------------------------------------------------------------------------- */
 
+/* the titles wrap in a narrow window or at a large UI scale, so every menu stays reachable */
 menubar {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	padding: 0 12px 0 7px;
+	padding: 3px 12px 3px 7px;
 	background: var(--panel-dark);
 	border-bottom: 0.5px solid var(--border);
 }
@@ -315,6 +318,7 @@ tool-group {
 	border: 0.5px solid var(--ring-hi);
 	overflow: hidden;
 }
+tool-group.eraser .group-title { color: var(--accent); }
 group-head {
 	display: flex;
 	align-items: center;
@@ -365,7 +369,7 @@ button.btn.pattern-row { width: auto; height: 20px; justify-content: flex-start;
 toolbar separator { height: 0.5px; margin: 6px 6px 0 6px; background: var(--ring-hi); flex: none; }
 #color-chips { height: 46px; margin: 7px 0 0 5px; flex: none; }
 
-/* ---- right panel: colour, swatches, layers, navigator ------------------------------------- */
+/* ---- right panel: color, swatches, layers, navigator ------------------------------------- */
 
 sidepanel {
 	display: flex;
@@ -405,6 +409,9 @@ row.panel-head button.icon-btn { width: 18px; height: 16px; }
 #recent-row { height: 12px; margin-bottom: 4px; }
 #recent-row .dim { width: 46px; }
 #recent { flex: 1; height: 12px; }
+#layer-head { margin-top: 2px; }
+#layer-props { gap: 4px; margin-bottom: 2px; }
+#layer-props button.combo, #layer-props slider-bar { height: 16px; margin-bottom: 0; }
 #filter-list { flex: 1; min-height: 40px; margin-bottom: 6px; }
 #preview-head { margin-top: 2px; }
 #preview { flex: 0 1 120px; min-height: 0; margin-bottom: 4px; }

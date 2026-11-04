@@ -9,3 +9,4 @@
 # per-user settings and scratch
 *.cfg
 shots/
+src/shared_*.odin
