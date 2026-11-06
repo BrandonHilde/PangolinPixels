@@ -569,6 +569,7 @@ selftest :: proc() -> int {
 	}
 	check(stable, "every percentage survives the trip through the stored value")
 
+	check(icons_ok(), "the app icon is there at every size")
 	fmt.printf("== %d failures ==\n", fails)
 	return fails
 }

@@ -1,85 +1,79 @@
 package pangolin
 
-import "core:math"
-
 APP_NAME :: "Pangolin Pixels"
 APP_TAGLINE :: "Pixel art, scale by scale."
 
 LOGO_SIZE :: 16
 
-// Pixel-art pangolin facing left. Characters map to colours in `logo_color`.
-LOGO_ART := [LOGO_SIZE]string {
-	"................",
-	"................",
-	"......oooooo....",
-	"....ooddbbddoo..",
-	"...oddbbddbbddo.",
-	"..oddbbddbbddbbo",
-	"..obbddbbddbbddo",
-	".oobddbbddbbddbo",
-	"ossoobbddbbddbo.",
-	"osswoddbbddbbo..",
-	".osssllooooooo..",
-	"..ooollo.ol.ol..",
-	"....ol.o.ol.ol..",
-	"....oo.o.oo.oo..",
-	"................",
-	"................",
+// The app icon, as drawn for each size: fewer and bigger scales as it gets smaller, and pixel art at 32 and below,
+// where smooth shapes would blur. The source is in PangolinShared/art/pangolin_icons. assets/icon/app.ico holds the
+// same drawings, for the Windows executable.
+@(private = "file")
+Icon_Size :: struct {
+	px:  i32,
+	png: []u8,
 }
 
-logo_color :: proc(ch: u8) -> (c: Color, ok: bool) {
-	switch ch {
-	case 'o':
-		return Color{46, 32, 24, 255}, true
-	case 'd':
-		return Color{139, 94, 60, 255}, true
-	case 'b':
-		return Color{192, 140, 86, 255}, true
-	case 'l':
-		return Color{224, 185, 136, 255}, true
-	case 's':
-		return Color{240, 217, 181, 255}, true
-	case 'w':
-		return Color{255, 255, 255, 255}, true
-	}
-	return {}, false
+@(private = "file")
+ICON_SIZES := [?]Icon_Size {
+	{16, #load("../assets/icon/icon_16.png")},
+	{24, #load("../assets/icon/icon_24.png")},
+	{32, #load("../assets/icon/icon_32.png")},
+	{48, #load("../assets/icon/icon_48.png")},
+	{64, #load("../assets/icon/icon_64.png")},
+	{128, #load("../assets/icon/icon_128.png")},
+	{256, #load("../assets/icon/icon_256.png")},
 }
 
-logo_tex: Texture
+@(private = "file")
+logo_cache: map[i32]Texture // by physical size
 
-logo_pixels :: proc(allocator := context.temp_allocator) -> []Color {
-	pix := make([]Color, LOGO_SIZE * LOGO_SIZE, allocator)
-	for row, y in LOGO_ART {
-		for x in 0 ..< len(row) {
-			if c, ok := logo_color(row[x]); ok {
-				pix[y * LOGO_SIZE + x] = c
-			}
-		}
-	}
-	return pix
-}
-
-// Window icon and the texture the menu bar and About dialog draw.
+// Window icon.
 brand_init :: proc() {
-	pix := logo_pixels()
-	logo_tex = tex_from_pixels(pix, LOGO_SIZE, LOGO_SIZE, .Point)
-	// the window icon, scaled up with whole pixels
-	BIG :: LOGO_SIZE * 4
-	big := make([]Color, BIG * BIG, context.temp_allocator)
-	for y in 0 ..< BIG {
-		for x in 0 ..< BIG {
-			big[y * BIG + x] = pix[(y / 4) * LOGO_SIZE + x / 4]
-		}
-	}
-	gfx_set_icon(big, BIG, BIG)
+	pix, w, h, ok := decode_common_image(ICON_SIZES[len(ICON_SIZES) - 1].png)
+	if !ok do return
+	defer delete(pix)
+	gfx_set_icon(pix, w, h)
 }
 
-// Draws the logo at an integer scale.
+// The drawing for this size, or the next one up to be reduced to it.
+@(private = "file")
+icon_for :: proc(px: i32) -> Icon_Size {
+	for s in ICON_SIZES {
+		if s.px >= px do return s
+	}
+	return ICON_SIZES[len(ICON_SIZES) - 1]
+}
+
+// Draws the logo LOGO_SIZE * scale logical px wide, sharp at the window's physical resolution.
 logo_draw :: proc(x, y, scale: i32) {
-	// a whole number of screen pixels per logo pixel keeps the art even at any UI scale; centred on
-	// where the exact size would have gone
-	exact := f32(LOGO_SIZE * scale)
-	size := LOGO_SIZE * max(math.round(f32(scale) * gfx.scale), 1) / gfx.scale
-	off := (exact - size) / 2
-	draw_tex(logo_tex, {0, 0, LOGO_SIZE, LOGO_SIZE}, {snap(f32(x) + off), snap(f32(y) + off), size, size})
+	size := LOGO_SIZE * scale
+	px := phys_size(size)
+	t, cached := logo_cache[px]
+	if !cached {
+		s := icon_for(px)
+		pix, w, h, ok := decode_common_image(s.png)
+		if !ok do return
+		defer delete(pix)
+		// an exact size stays pixel for pixel; a larger drawing is reduced smoothly
+		t = tex_from_pixels(pix, w, h, s.px == px ? .Point : .Linear)
+		logo_cache[px] = t
+	}
+	if t.w == px {
+		draw_tex_exact(t, {0, 0, f32(t.w), f32(t.h)}, f32(x), f32(y))
+	} else {
+		draw_tex(t, {0, 0, f32(t.w), f32(t.h)}, {snap(f32(x)), snap(f32(y)), f32(size), f32(size)})
+	}
+}
+
+// True if every size is a readable image of that size, with a see-through corner and a solid middle.
+icons_ok :: proc() -> bool {
+	for s in ICON_SIZES {
+		pix, w, h, ok := decode_common_image(s.png)
+		if !ok do return false
+		defer delete(pix)
+		if w != int(s.px) || h != int(s.px) do return false
+		if pix[0].a != 0 || pix[(h / 2) * w + w / 2].a != 255 do return false
+	}
+	return true
 }
