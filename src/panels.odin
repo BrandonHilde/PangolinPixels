@@ -1328,7 +1328,11 @@ panel_timeline_grid :: proc(body: Rect) {
 		if !layer_drag_on && ui.down[0] && abs(ui.my - layer_drag_y0) > 4 {
 			layer_drag_on = true
 		}
-		if layer_drag_on {
+		if layer_drag_on && ui.my - names.y + tl_scroll_y >= nlayers * row_h {
+			// below every row: to the bottom, out of any group
+			fill_rect(Rect{names.x + 36, names.y + nlayers * row_h - tl_scroll_y - 1, names.w - 37, 2}, C_ACCENT)
+			if ui.released[0] do doc_move_to(d, layer_drag, 0, .Bottom)
+		} else if layer_drag_on {
 			ri := clamp((ui.my - names.y + tl_scroll_y) / row_h, 0, nlayers - 1)
 			target := rows[ri]
 			within := ui.my - (names.y + ri * row_h - tl_scroll_y) // pointer's height in the row
@@ -1349,7 +1353,7 @@ panel_timeline_grid :: proc(body: Rect) {
 					outline_rect(rect_inset(Rect{names.x, ry, names.w - 1, row_h}, 1), C_ACCENT)
 				case .Above:
 					fill_rect(Rect{names.x + 36 + ind, ry - 1, names.w - 37 - ind, 2}, C_ACCENT)
-				case .Below:
+				case .Below, .Bottom:
 					fill_rect(Rect{names.x + 36 + ind, ry + row_h - 1, names.w - 37 - ind, 2}, C_ACCENT)
 				}
 				if ui.released[0] {

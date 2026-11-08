@@ -259,13 +259,26 @@ Layer_Drop :: enum {
 	Above,
 	Below,
 	Into, // to the top of a group
+	Bottom, // to the bottom of the list, out of every group (`target` is not used)
 }
 
 // Moves layer `src` (with what is in it) above or below layer `target`, in target's group, or into group `target`.
 // False if that is no move, or would put a group inside itself.
 doc_move_to :: proc(d: ^Doc, src, target: int, drop: Layer_Drop) -> bool {
 	n := len(d.layers)
-	if src < 0 || src >= n || target < 0 || target >= n do return false
+	if src < 0 || src >= n do return false
+	if drop == .Bottom {
+		if d.layers[src].parent == 0 && layer_span_start(d.layers[:], src) == 0 do return false // there already
+		history_push(d)
+		keys := list_keys(d)
+		d.layers[src].parent = 0
+		keys[src] = -1
+		d.active_layer = src
+		doc_layers_normalize(d, keys)
+		doc_touch(d)
+		return true
+	}
+	if target < 0 || target >= n do return false
 	if src == target do return false
 	if d.layers[src].is_group && layer_in_group(d.layers[:], target, src) do return false
 	if drop == .Into && !d.layers[target].is_group do return false
@@ -282,6 +295,7 @@ doc_move_to :: proc(d: ^Doc, src, target: int, drop: Layer_Drop) -> bool {
 	case .Into:
 		l.parent = d.layers[target].uid
 		keys[src] = f64(target) // above everything already in it
+	case .Bottom:
 	}
 	d.active_layer = src
 	doc_layers_normalize(d, keys)

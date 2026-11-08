@@ -631,6 +631,9 @@ selftest :: proc() -> int {
 		gd.active_layer = 1
 		doc_group_wrap(gd)
 		check(doc_ungroup(gd) && len(gd.layers) == 2 && gd.layers[1].parent == 0, "groups: Ungroup leaves the layers where they were")
+		gd.active_layer = 1
+		doc_group_wrap(gd)
+		check(doc_move_to(gd, 1, 0, .Bottom) && gd.layers[0].parent == 0 && !gd.layers[0].is_group && gd.layers[2].is_group, "groups: a layer dropped below the list leaves its group, to the bottom")
 		doc = d
 	}
 
