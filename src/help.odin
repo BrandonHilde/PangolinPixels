@@ -114,6 +114,12 @@ cmd_help :: proc(c: Cmd) -> string {
 		return "Combine the current layer with the one below it, in all frames. Its opacity, blend mode and filters are applied for good."
 	case .Layer_Flatten:
 		return "Combine all visible layers into one, in all frames. Their filters are applied for good."
+	case .Layer_Group_New:
+		return "Add an empty layer group above the current layer. Drag layers onto it in the timeline to put them in it."
+	case .Layer_Group:
+		return "Put the current layer in a new group of its own. A group shows its layers together: hide it, change its opacity, blend mode or filters, move or copy it, and they all follow."
+	case .Layer_Ungroup:
+		return "Take the current group apart: its layers stay where they are, out of the group."
 	case .Layer_Props:
 		return "Edit the current layer's name, opacity, blend mode, visibility and lock."
 	case .Layer_Vis:

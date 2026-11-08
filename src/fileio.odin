@@ -223,7 +223,7 @@ rcol :: proc(r: ^Reader) -> Color {
 // ---------------------------------------------------------------------------
 
 PXL_MAGIC :: "PXLA"
-PXL_VERSION :: 2 // 1: no layer filters (still readable)
+PXL_VERSION :: 3 // 1: no layer filters (still readable), 3: layer groups (after a layer's blend: u32 uid, u32 parent uid, u8 flags: 1 group, 2 pass through, 4 closed)
 
 rle_encode :: proc(w: ^Writer, pix: []Color) {
 	tmp := Writer{}
@@ -285,6 +285,13 @@ project_encode :: proc(d: ^Doc) -> []u8 {
 		w8(&w, flags)
 		w8(&w, l.opacity)
 		w8(&w, u8(l.blend))
+		w32(&w, u32(l.uid))
+		w32(&w, u32(l.parent))
+		gf: u8
+		if l.is_group do gf |= 1
+		if l.pass_through do gf |= 2
+		if l.collapsed do gf |= 4
+		w8(&w, gf)
 		for c in l.cels {
 			rle_encode(&w, c.pix)
 		}
@@ -354,6 +361,12 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 		l.locked = flags & 2 != 0
 		l.opacity = r8(&r)
 		l.blend = Blend(min(r8(&r), u8(len(Blend) - 1)))
+		if ver >= 3 {
+			l.uid = int(r32(&r))
+			l.parent = int(r32(&r))
+			gf := r8(&r)
+			l.is_group, l.pass_through, l.collapsed = gf & 1 != 0, gf & 2 != 0, gf & 4 != 0
+		}
 		for _ in 0 ..< nf {
 			c := cel_new(w * h)
 			rle_decode(&r, c.pix)
@@ -396,6 +409,7 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 			append(&nd.palette, c)
 		}
 	}
+	doc_layers_normalize(nd) // uids for layers from older files, and a sound tree
 	nd.modified = false
 	return nd, true
 }

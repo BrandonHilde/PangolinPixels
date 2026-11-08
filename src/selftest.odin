@@ -569,6 +569,71 @@ selftest :: proc() -> int {
 	}
 	check(stable, "every percentage survives the trip through the stored value")
 
+	// --- layer groups ---
+	{
+		gd := doc_new(4, 1, "groups")
+		append(&docs, gd)
+		doc = gd
+		white := Color{255, 255, 255, 255}
+		red := Color{220, 30, 30, 255}
+		for x in 0 ..< 4 do cel_write(gd, 0, 0)[x] = white
+		doc_add_layer(gd)
+		cel_write(gd, 1, 0)[0] = red
+		cel_write(gd, 1, 0)[1] = red
+		doc_add_layer(gd)
+		for x in 0 ..< 4 do cel_write(gd, 2, 0)[x] = white
+		gd.layers[2].blend = .Difference
+		name_set(&gd.layers[1].name, "Red")
+		name_set(&gd.layers[2].name, "Diff")
+		named :: proc(d: ^Doc, i: int) -> string {return name_str(&d.layers[i].name)}
+		flat :: proc(d: ^Doc) -> []Color {
+			out := make([]Color, d.w * d.h, context.temp_allocator)
+			composite(d, d.active_frame, out)
+			return out
+		}
+		doc_group_wrap(gd)
+		check(gd.active_layer == 3 && gd.layers[3].is_group && gd.layers[2].parent == gd.layers[3].uid, "groups: Group Layer puts the layer in a new group")
+		check(doc_move_to(gd, 1, 3, .Into) && named(gd, 2) == "Red", "groups: a layer moves into a group, at its top")
+		gd.active_layer = 2
+		check(doc_move_layer(gd, -1) && named(gd, 1) == "Red" && named(gd, 2) == "Diff", "groups: Move Down within a group")
+		fl := flat(gd)
+		check(fl[0] == Color{35, 225, 225, 255} && fl[2] == Color{0, 0, 0, 255}, "groups: a pass-through group's layers blend straight into what is below")
+		gd.layers[3].pass_through = false
+		fl = flat(gd)
+		check(fl[2] != Color{0, 0, 0, 255}, "groups: any other group combines its layers first")
+		gd.layers[3].pass_through = true
+		append(&gd.layers[3].filters, filter_make(.Invert))
+		fl = flat(gd)
+		check(fl[0] == red, "groups: a filter on a group applies to its layers combined (cyan inverted is red again)")
+		clear(&gd.layers[3].filters)
+		gd.layers[3].visible = false
+		fl = flat(gd)
+		check(fl[0] == white && fl[2] == white, "groups: hiding a group hides what is in it")
+		gd.layers[3].visible = true
+		gd.active_layer = 3
+		check(!can_edit(), "groups: a group can't be painted on")
+		gd.active_layer = 1
+		check(layer_merge_target(gd) < 0, "groups: nothing to merge into at the bottom of a group")
+		data := project_encode(gd)
+		gd2, ok2 := project_decode(data)
+		check(ok2 && len(gd2.layers) == 4 && gd2.layers[3].is_group && gd2.layers[1].parent == gd2.layers[3].uid && gd2.layers[2].parent == gd2.layers[3].uid, "groups: saved in the .pxl file")
+		if ok2 do doc_destroy(gd2)
+		gd.active_layer = 3
+		doc_dup_layer(gd)
+		check(len(gd.layers) == 7 && gd.layers[6].is_group && gd.layers[4].parent == gd.layers[6].uid, "groups: Duplicate copies a group with what is in it")
+		check(doc_delete_layer(gd) && len(gd.layers) == 4, "groups: Delete removes a group with what is in it")
+		gd.active_layer = 3
+		gd.layers[3].pass_through = false
+		before := flat(gd)
+		check(doc_merge_down(gd) && len(gd.layers) == 2 && !gd.layers[1].is_group, "groups: Merge Group makes one layer")
+		after := flat(gd)
+		check(after[0] == before[0] && after[2] == before[2], "groups: a merged group looks as it did")
+		gd.active_layer = 1
+		doc_group_wrap(gd)
+		check(doc_ungroup(gd) && len(gd.layers) == 2 && gd.layers[1].parent == 0, "groups: Ungroup leaves the layers where they were")
+		doc = d
+	}
+
 	check(icons_ok(), "the app icon is there at every size")
 	fmt.printf("== %d failures ==\n", fails)
 	return fails

@@ -145,9 +145,13 @@ menu_build :: proc(idx: int) {
 		item("Duplicate Layer", cmd = .Layer_Dup)
 		item("Delete Layer", cmd = .Layer_Del)
 		popup_sep()
+		item("New Group", cmd = .Layer_Group_New)
+		item("Group Layer", cmd = .Layer_Group)
+		item("Ungroup", cmd = .Layer_Ungroup, enabled = doc.layers[doc.active_layer].is_group)
+		popup_sep()
 		item("Move Up", cmd = .Layer_Up)
 		item("Move Down", cmd = .Layer_Down)
-		item("Merge Down", cmd = .Layer_Merge)
+		item(doc.layers[doc.active_layer].is_group ? "Merge Group" : "Merge Down", cmd = .Layer_Merge)
 		item("Flatten", cmd = .Layer_Flatten)
 		popup_sep()
 		item("Properties...", cmd = .Layer_Props)
@@ -1173,7 +1177,8 @@ panel_timeline_grid :: proc(body: Rect) {
 	head := Rect{body.x + hdr_w, body.y, body.w - hdr_w, hdr_h}
 	grid := Rect{body.x + hdr_w, body.y + hdr_h, body.w - hdr_w, body.h - hdr_h}
 
-	nlayers := i32(len(d.layers))
+	rows := layer_rows(d) // top first; what is in a closed group is left out
+	nlayers := i32(len(rows))
 	nframes := i32(len(d.frames))
 	content_w := nframes * frame_w + 20
 	content_h := nlayers * row_h
@@ -1243,8 +1248,8 @@ panel_timeline_grid :: proc(body: Rect) {
 
 	// layer rows
 	clip_begin(names)
-	for i in 0 ..< nlayers {
-		li := int(nlayers - 1 - i)
+	for li, ii in rows {
+		i := i32(ii)
 		ry := names.y + i * row_h - tl_scroll_y
 		if ry + row_h < names.y || ry > names.y + names.h {
 			continue
@@ -1262,13 +1267,22 @@ panel_timeline_grid :: proc(body: Rect) {
 		lock := Rect{row.x + 20, ry + 2, 12, 12}
 		icon(.Eye, eye.x, eye.y, l.visible ? C_TEXT : C_TEXT_OFF)
 		icon(.Lock, lock.x, lock.y, l.locked ? C_ACCENT : C_TEXT_OFF)
-		has_fx := l.opacity < 255 || l.blend != .Normal || len(l.filters) > 0
-		text_clipped(Rect{row.x + 38, ry, row.w - (has_fx ? 60 : 42), row_h}, name_str(&l.name), l.visible ? C_TEXT : C_TEXT_DIM)
+		has_fx := l.opacity < 255 || (l.blend != .Normal && !(l.is_group && l.pass_through)) || len(l.filters) > 0
+		ind := i32(layer_depth(d.layers[:], li)) * LAYER_INDENT
+		fold := Rect{row.x + 36 + ind, ry + 2, 12, 12}
+		nx := row.x + 38 + ind
+		if l.is_group {
+			icon(l.collapsed ? .Right : .Down, fold.x, fold.y, C_TEXT_DIM)
+			nx += 14
+			if ui_hover(names) do tip_area(fold, "layer-fold", {l.collapsed ? "Open group" : "Close group", "Show or hide the layers in this group here. It doesn't change the picture."})
+		}
+		shown := l.visible && !layer_hidden(d.layers[:], li)
+		text_clipped(Rect{nx, ry, row.x + row.w - (has_fx ? 22 : 4) - nx, row_h}, name_str(&l.name), shown ? C_TEXT : C_TEXT_DIM)
 		if has_fx {
 			text(row.x + row.w - 18, ry + (row_h - FONT_CAP) / 2, "fx", C_TEXT_DIM)
 		}
 		if ui_hover(names) {
-			tip_area(row, "layer-row", {name_str(&l.name), "Click to work on this layer, double-click for its properties, right-click for its menu. Drag to move it. fx means it has an opacity, blend mode or filters."})
+			tip_area(row, "layer-row", {name_str(&l.name), l.is_group ? "A layer group. Click to pick it, double-click for its properties, right-click for its menu. Drag layers onto it to put them in it; drag it to move it with what is in it. Filters on a group apply to its layers combined." : "Click to work on this layer, double-click for its properties, right-click for its menu. Drag to move it (onto a group to put it in the group). fx means it has an opacity, blend mode or filters."})
 			tip_area(eye, "layer-eye", {"Show or hide layer", "A hidden layer is left out of exports too."})
 			tip_area(lock, "layer-lock", {"Lock or unlock layer", "Tools can't change a locked layer."})
 		}
@@ -1280,6 +1294,8 @@ panel_timeline_grid :: proc(body: Rect) {
 			} else if in_rect(lock, ui.mx, ui.my) {
 				l.locked = !l.locked
 				d.modified = true
+			} else if l.is_group && in_rect(rect_inset(fold, -2), ui.mx, ui.my) {
+				l.collapsed = !l.collapsed
 			} else {
 				d.active_layer = li
 				layer_drag, layer_drag_y0, layer_drag_on = li, ui.my, false
@@ -1293,9 +1309,13 @@ panel_timeline_grid :: proc(body: Rect) {
 			d.active_layer = li
 			popup_begin(make_id(names, "layermenu"), Rect{ui.mx, ui.my, 1, 1}, 150)
 			popup_item("New Layer", cmd = .Layer_New)
-			popup_item("Duplicate Layer", cmd = .Layer_Dup)
-			popup_item("Delete Layer", cmd = .Layer_Del, enabled = len(d.layers) > 1)
-			popup_item("Merge Down", cmd = .Layer_Merge, enabled = li > 0)
+			popup_item(l.is_group ? "Duplicate Group" : "Duplicate Layer", cmd = .Layer_Dup)
+			popup_item(l.is_group ? "Delete Group" : "Delete Layer", cmd = .Layer_Del, enabled = li - layer_span_start(d.layers[:], li) + 1 < len(d.layers))
+			popup_item(l.is_group ? "Merge Group" : "Merge Down", cmd = .Layer_Merge, enabled = l.is_group || layer_merge_target(d) >= 0)
+			popup_sep()
+			popup_item("New Group", cmd = .Layer_Group_New)
+			popup_item("Group Layer", cmd = .Layer_Group)
+			if l.is_group do popup_item("Ungroup", cmd = .Layer_Ungroup)
 			popup_sep()
 			popup_item("Visible", cmd = .Layer_Vis, checked = l.visible)
 			popup_item("Locked", cmd = .Layer_Lock, checked = l.locked)
@@ -1304,18 +1324,36 @@ panel_timeline_grid :: proc(body: Rect) {
 		}
 	}
 	// drag a row up or down to reorder; the line shows where it will land
-	if layer_drag >= 0 && layer_drag < int(nlayers) {
+	if layer_drag >= 0 && layer_drag < len(d.layers) && nlayers > 0 {
 		if !layer_drag_on && ui.down[0] && abs(ui.my - layer_drag_y0) > 4 {
 			layer_drag_on = true
 		}
 		if layer_drag_on {
 			ri := clamp((ui.my - names.y + tl_scroll_y) / row_h, 0, nlayers - 1)
-			target := int(nlayers - 1 - ri)
-			if target != layer_drag {
-				ly := names.y + (target > layer_drag ? ri : ri + 1) * row_h - tl_scroll_y
-				fill_rect(Rect{names.x, ly - 1, names.w - 1, 2}, C_ACCENT)
+			target := rows[ri]
+			within := ui.my - (names.y + ri * row_h - tl_scroll_y) // pointer's height in the row
+			drop: Layer_Drop
+			switch {
+			case d.layers[target].is_group && within > row_h / 4:
+				drop = .Into
+			case within < row_h / 2:
+				drop = .Above
+			case:
+				drop = .Below
+			}
+			if target != layer_drag && !(d.layers[layer_drag].is_group && layer_in_group(d.layers[:], target, layer_drag)) {
+				ry := names.y + ri * row_h - tl_scroll_y
+				ind := i32(layer_depth(d.layers[:], target)) * LAYER_INDENT
+				switch drop {
+				case .Into:
+					outline_rect(rect_inset(Rect{names.x, ry, names.w - 1, row_h}, 1), C_ACCENT)
+				case .Above:
+					fill_rect(Rect{names.x + 36 + ind, ry - 1, names.w - 37 - ind, 2}, C_ACCENT)
+				case .Below:
+					fill_rect(Rect{names.x + 36 + ind, ry + row_h - 1, names.w - 37 - ind, 2}, C_ACCENT)
+				}
 				if ui.released[0] {
-					doc_move_layer_to(d, layer_drag, target)
+					doc_move_to(d, layer_drag, target, drop)
 				}
 			}
 		}
@@ -1329,12 +1367,13 @@ panel_timeline_grid :: proc(body: Rect) {
 
 	// cells
 	clip_begin(grid)
-	for i in 0 ..< nlayers {
-		li := int(nlayers - 1 - i)
+	for li, ii in rows {
+		i := i32(ii)
 		ry := grid.y + i * row_h - tl_scroll_y
 		if ry + row_h < grid.y || ry > grid.y + grid.h {
 			continue
 		}
+		if d.layers[li].is_group do continue // a group has no pictures of its own
 		for f in 0 ..< nframes {
 			fx := grid.x + f * frame_w - tl_scroll_x
 			if fx + frame_w < grid.x || fx > grid.x + grid.w {
@@ -1369,9 +1408,8 @@ panel_timeline_grid :: proc(body: Rect) {
 		set_frame(f)
 		if ui.pressed[0] {
 			row := int((ui.my - grid.y + tl_scroll_y) / row_h)
-			li := len(d.layers) - 1 - row
-			if li >= 0 && li < len(d.layers) {
-				d.active_layer = li
+			if row >= 0 && row < len(rows) {
+				d.active_layer = rows[row]
 			}
 			if ui.dbl_click {
 				dialog_open(.Frame_Props)

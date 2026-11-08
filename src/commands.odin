@@ -62,6 +62,9 @@ Cmd :: enum {
 	Layer_Merge,
 	Layer_Flatten,
 	Layer_Props,
+	Layer_Group_New,
+	Layer_Group,
+	Layer_Ungroup,
 	Layer_Vis,
 	Layer_Lock,
 	// frame
@@ -164,6 +167,8 @@ SHORTCUTS := [?]Shortcut {
 	{.Deselect, .ESCAPE, false, false, false},
 	{.Invert_Sel, .I, true, false, false},
 	{.Layer_New, .N, true, true, false},
+	{.Layer_Group, .G, true, false, false},
+	{.Layer_Ungroup, .G, true, true, false},
 	{.Layer_New, .N, false, true, false},
 	{.Layer_Dup, .J, true, false, false},
 	{.Layer_Merge, .E, true, false, false},
@@ -430,7 +435,7 @@ run_cmd :: proc(cmd: Cmd) {
 	}
 	// Anything that edits stops playback
 	#partial switch cmd {
-	case .Undo, .Redo, .Cut, .Paste, .Delete, .Layer_New, .Layer_Dup, .Layer_Del, .Layer_Merge, .Layer_Flatten, .Frame_Del:
+	case .Undo, .Redo, .Cut, .Paste, .Delete, .Layer_New, .Layer_Dup, .Layer_Del, .Layer_Merge, .Layer_Flatten, .Frame_Del, .Layer_Group_New, .Layer_Group, .Layer_Ungroup:
 		stop_playback()
 	}
 	switch cmd {
@@ -560,7 +565,15 @@ run_cmd :: proc(cmd: Cmd) {
 		doc_move_layer(doc, -1)
 	case .Layer_Merge:
 		if !doc_merge_down(doc) {
-			set_status("No layer below to merge into")
+			set_status("No layer below in this group to merge into (a layer can't merge into a group)")
+		}
+	case .Layer_Group_New:
+		doc_group_new(doc)
+	case .Layer_Group:
+		doc_group_wrap(doc)
+	case .Layer_Ungroup:
+		if !doc_ungroup(doc) {
+			set_status("Pick a group to take apart")
 		}
 	case .Layer_Flatten:
 		if !doc_flatten(doc) {

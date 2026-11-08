@@ -313,6 +313,10 @@ stroke: Stroke
 // Returns false (with a status message) when the active cel cannot be edited.
 can_edit :: proc() -> bool {
 	l := &doc.layers[doc.active_layer]
+	if l.is_group {
+		set_status("This is a group: pick a layer in it to change pixels")
+		return false
+	}
 	if !l.visible {
 		set_status("The active layer is hidden")
 		return false

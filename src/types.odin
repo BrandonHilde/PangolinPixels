@@ -69,6 +69,12 @@ Layer :: struct {
 	blend:   Blend,
 	cels:    [dynamic]^Cel_Data, // one per frame
 	filters: [dynamic]Layer_Filter, // applied in order when compositing
+	// layer groups (groups.odin)
+	uid:          int, // unique in its document (0: not given one yet)
+	parent:       int, // uid of the group it is in, or 0 at the top level
+	is_group:     bool, // a group: no pixels of its own; its layers are those whose parent it is, just below it
+	pass_through: bool, // a group whose layers blend straight into what is below (else they are combined first)
+	collapsed:    bool, // a group shown closed in the timeline
 }
 
 Frame :: struct {

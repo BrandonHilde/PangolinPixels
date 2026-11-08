@@ -77,6 +77,7 @@ dialog_open :: proc(k: Dialog_Kind) {
 		dialog.name = l.name
 		dialog.a = opacity_percent(l.opacity)
 		dialog.b = int(l.blend)
+		if l.is_group do dialog.b = l.pass_through ? 0 : int(l.blend) + 1 // a group's list starts with Pass Through
 		dialog.flag = l.visible
 		dialog.flag2 = l.locked
 	case .Frame_Props:
@@ -346,7 +347,8 @@ dlg_layer_props :: proc() {
 	slider(Rect{c.x + 70, y, 170, 14}, &dialog.a, 0, 100, "", LAYER_OPACITY_TIP, "%")
 	y += 20
 	tip_text(c.x, y + 3, "Blend", C_TEXT, LAYER_BLEND_TIP)
-	nv, ch := combo(Rect{c.x + 70, y, 110, 14}, blend_names_slice(), dialog.b, LAYER_BLEND_TIP)
+	is_group := doc.layers[doc.active_layer].is_group
+	nv, ch := combo(Rect{c.x + 70, y, 110, 14}, is_group ? group_blend_names() : blend_names_slice(), dialog.b, is_group ? Tip{"Blend", "Pass Through: the group's layers blend straight into what is below it, each by its own mode. Any other mode (or a filter on the group) combines its layers first, then blends the result in."} : LAYER_BLEND_TIP)
 	if ch {
 		dialog.b = nv
 	}
@@ -362,7 +364,12 @@ dlg_layer_props :: proc() {
 		l := &doc.layers[doc.active_layer]
 		l.name = dialog.name
 		if dialog.a != opacity_percent(l.opacity) do l.opacity = opacity_from_percent(dialog.a)
-		l.blend = Blend(dialog.b)
+		if l.is_group {
+			l.pass_through = dialog.b == 0
+			if dialog.b > 0 do l.blend = Blend(dialog.b - 1)
+		} else {
+			l.blend = Blend(dialog.b)
+		}
 		l.visible = dialog.flag
 		l.locked = dialog.flag2
 		doc_touch(doc)

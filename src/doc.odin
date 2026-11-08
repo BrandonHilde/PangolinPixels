@@ -261,31 +261,95 @@ blend_px :: proc(dst, src: Color, opacity: f32, mode: Blend) -> Color {
 }
 
 composite :: proc(d: ^Doc, frame: int, out: []Color) {
+	composite_layers(d, d.layers[:], frame, out)
+}
+
+// Layers (with the groups among them) of frame `frame` into `out`.
+composite_layers :: proc(d: ^Doc, layers: []Layer, frame: int, out: []Color) {
 	for &p in out {
 		p = {}
 	}
-	for &l in d.layers {
-		if !l.visible || l.opacity == 0 {
+	if !layers_have_groups(layers) {
+		for &l in layers do comp_layer(d, &l, frame, out, 1)
+		return
+	}
+	t := comp_tree(layers)
+	comp_items(d, layers, &t, t.top[:], frame, out, 1)
+}
+
+// Which layers are in which group: `kids[g]` are group g's layers and `top` the rest, each bottom first.
+Comp_Tree :: struct {
+	top:  [dynamic]int,
+	kids: [][dynamic]int,
+}
+
+comp_tree :: proc(layers: []Layer) -> Comp_Tree {
+	t := Comp_Tree {
+		top  = make([dynamic]int, context.temp_allocator),
+		kids = make([][dynamic]int, len(layers), context.temp_allocator),
+	}
+	at := make(map[int]int, len(layers), context.temp_allocator)
+	for &l, i in layers do if l.uid != 0 do at[l.uid] = i
+	for &l, i in layers {
+		p, ok := at[l.parent]
+		if l.parent != 0 && ok && layers[p].is_group && p != i {
+			if t.kids[p] == nil do t.kids[p] = make([dynamic]int, context.temp_allocator)
+			append(&t.kids[p], i)
+		} else {
+			append(&t.top, i)
+		}
+	}
+	return t
+}
+
+@(private = "file")
+comp_items :: proc(d: ^Doc, layers: []Layer, t: ^Comp_Tree, items: []int, frame: int, out: []Color, op_mul: f32) {
+	for i in items {
+		l := &layers[i]
+		if !l.is_group {
+			comp_layer(d, l, frame, out, op_mul)
 			continue
 		}
-		src := layer_pixels(d, &l, frame)
-		if l.blend == .Normal && l.opacity == 255 {
-			for i in 0 ..< len(out) {
-				s := src[i]
-				if s.a == 0 {
-					continue
-				}
-				if s.a == 255 {
-					out[i] = s
-				} else {
-					out[i] = blend_px(out[i], s, 1, .Normal)
-				}
+		if !l.visible || l.opacity == 0 || len(t.kids[i]) == 0 do continue
+		gop := op_mul * f32(l.opacity) / 255
+		if l.pass_through && !layer_has_filters(l) {
+			comp_items(d, layers, t, t.kids[i][:], frame, out, gop)
+			continue
+		}
+		// combined on their own first, the group's filters applied, then blended by its mode and opacity
+		buf := make([]Color, len(out), context.temp_allocator)
+		comp_items(d, layers, t, t.kids[i][:], frame, buf, 1)
+		for f in l.filters do if f.enabled do filter_apply(buf, f, d.palette[:])
+		mode := l.pass_through ? Blend.Normal : l.blend
+		for p, k in buf {
+			if p.a == 0 do continue
+			out[k] = blend_px(out[k], p, gop, mode)
+		}
+	}
+}
+
+@(private = "file")
+comp_layer :: proc(d: ^Doc, l: ^Layer, frame: int, out: []Color, op_mul: f32) {
+	if !l.visible || l.opacity == 0 {
+		return
+	}
+	src := layer_pixels(d, l, frame)
+	if l.blend == .Normal && l.opacity == 255 && op_mul >= 1 {
+		for i in 0 ..< len(out) {
+			s := src[i]
+			if s.a == 0 {
+				continue
 			}
-		} else {
-			op := f32(l.opacity) / 255
-			for i in 0 ..< len(out) {
-				out[i] = blend_px(out[i], src[i], op, l.blend)
+			if s.a == 255 {
+				out[i] = s
+			} else {
+				out[i] = blend_px(out[i], s, 1, .Normal)
 			}
+		}
+	} else {
+		op := f32(l.opacity) / 255 * op_mul
+		for i in 0 ..< len(out) {
+			out[i] = blend_px(out[i], src[i], op, l.blend)
 		}
 	}
 }
@@ -315,70 +379,39 @@ doc_refresh_comp :: proc(d: ^Doc) {
 doc_add_layer :: proc(d: ^Doc) {
 	history_push(d)
 	l := layer_make(fmt.tprintf("Layer %d", len(d.layers) + 1), len(d.frames), d.w * d.h)
-	inject_at(&d.layers, d.active_layer + 1, l)
-	d.active_layer += 1
+	layer_insert_above(d, l, d.active_layer)
 	doc_touch(d)
 }
 
+// Deletes the active layer; a group goes with everything in it. False if no layer would be left.
 doc_delete_layer :: proc(d: ^Doc) -> bool {
-	if len(d.layers) <= 1 {
+	g := d.active_layer
+	s := layer_span_start(d.layers[:], g)
+	if g - s + 1 >= len(d.layers) {
 		return false
 	}
 	history_push(d)
-	layer_destroy(&d.layers[d.active_layer])
-	ordered_remove(&d.layers, d.active_layer)
-	d.active_layer = clamp(d.active_layer, 0, len(d.layers) - 1)
+	layers_remove_run(d, s, g)
 	doc_touch(d)
 	return true
 }
 
+// Copies the active layer (a group with everything in it) just above it.
 doc_dup_layer :: proc(d: ^Doc) {
 	history_push(d)
-	src := d.layers[d.active_layer]
-	nl := src
-	nl.cels = make([dynamic]^Cel_Data, 0, len(src.cels))
-	for c in src.cels {
-		c.refs += 1
-		append(&nl.cels, c)
-	}
-	nl.filters = slice.clone_to_dynamic(src.filters[:])
-	nm := fmt.tprintf("%s copy", name_str(&src.name))
-	name_set(&nl.name, nm)
-	inject_at(&d.layers, d.active_layer + 1, nl)
-	d.active_layer += 1
+	doc_dup_run(d)
 	doc_touch(d)
 }
 
-doc_move_layer :: proc(d: ^Doc, dir: int) -> bool {
-	a := d.active_layer
-	b := a + dir
-	if b < 0 || b >= len(d.layers) {
-		return false
-	}
-	history_push(d)
-	d.layers[a], d.layers[b] = d.layers[b], d.layers[a]
-	d.active_layer = b
-	doc_touch(d)
-	return true
-}
-
-// Moves layer `from` to index `to` (one undo step), keeping it the active layer.
+// Moves layer `from` to just above or below layer `to` (whichever way it is moving), in to's group.
 doc_move_layer_to :: proc(d: ^Doc, from, to: int) -> bool {
-	if from == to || from < 0 || to < 0 || from >= len(d.layers) || to >= len(d.layers) {
-		return false
-	}
-	history_push(d)
-	l := d.layers[from]
-	ordered_remove(&d.layers, from)
-	inject_at(&d.layers, to, l)
-	d.active_layer = to
-	doc_touch(d)
-	return true
+	return doc_move_to(d, from, to, to > from ? .Above : .Below)
 }
 
 doc_merge_down :: proc(d: ^Doc) -> bool {
 	i := d.active_layer
-	if i <= 0 {
+	if d.layers[i].is_group do return doc_merge_group(d)
+	if layer_merge_target(d) != i - 1 {
 		return false
 	}
 	history_push(d)
