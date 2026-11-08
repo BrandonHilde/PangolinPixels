@@ -16,6 +16,7 @@ Cmd :: enum {
 	Pixel_Art_Convert,
 	Export,
 	Export_PNG_Quick,
+	Recent_Clear,
 	Close_Doc,
 	Exit,
 	Palette_Load,
@@ -131,6 +132,9 @@ Cmd :: enum {
 	// saved and built-in workspaces, in the order of `ws_entries`
 	Ws_First,
 	Ws_Last = Ws_First + WS_MAX - 1,
+	// the File menu's recent files, in the order of `recent_files`
+	Recent_First,
+	Recent_Last = Recent_First + RECENT_FILES_MAX - 1,
 }
 
 Shortcut :: struct {
@@ -416,6 +420,10 @@ run_cmd :: proc(cmd: Cmd) {
 		select_tool_in_group(Tool(int(cmd) - int(Cmd.Tool_Pencil)))
 		return
 	}
+	if cmd >= .Recent_First && cmd <= .Recent_Last {
+		recent_open(int(cmd) - int(Cmd.Recent_First))
+		return
+	}
 	if cmd >= .Ws_First && cmd <= .Ws_Last {
 		workspace_apply_index(int(cmd) - int(Cmd.Ws_First))
 		return
@@ -657,7 +665,10 @@ run_cmd :: proc(cmd: Cmd) {
 	case .UI_Scale:
 		dialog_open(.UI_Scale)
 
-	case .Tool_Pencil ..= .Tool_Zoom, .Ws_First ..= .Ws_Last:
+	case .Tool_Pencil ..= .Tool_Zoom, .Ws_First ..= .Ws_Last, .Recent_First ..= .Recent_Last:
+	case .Recent_Clear:
+		recent_clear()
+		set_status("Cleared the recent files")
 	case .Ws_Manage:
 		dialog_open(.Workspaces)
 	case .Ws_Import:

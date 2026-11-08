@@ -486,6 +486,7 @@ open_path :: proc(path: string) {
 		d.path = strings.clone(path)
 		name_set(&d.title, path_stem(path))
 		add_doc(d)
+		recent_add(path)
 		set_statusf("Opened %s", path_basename(path))
 	case ".gpl":
 		if palette_load_gpl(doc, path) {
@@ -500,6 +501,7 @@ open_path :: proc(path: string) {
 			return
 		}
 		add_doc(d)
+		recent_add(path)
 		set_statusf("Imported %s", path_basename(path))
 	}
 }
@@ -529,6 +531,7 @@ file_save :: proc(d: ^Doc, save_as: bool) -> bool {
 		}
 	}
 	d.modified = false
+	recent_add(path)
 	set_statusf("Saved %s", path_basename(path))
 	return true
 }
