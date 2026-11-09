@@ -321,7 +321,7 @@ TOOL_ICONS := [Tool]Icon {
 }
 
 panel_toolbar :: proc() {
-	oui.element(uictx, "toolbar", "toolbar", {id = "toolbar"})
+	panel_element(.Toolbar, "toolbar", "toolbar")
 	defer oui.end(uictx)
 	t := eff_tool()
 	rem_g, rem_t := -1, -1
@@ -718,7 +718,7 @@ palette_area_w: i32 = 216 // width of the palette grid last frame, for its heigh
 
 panel_right :: proc() {
 	d := doc
-	oui.element(uictx, "right", "sidepanel", {id = "right"})
+	panel_element(.Right, "right", "sidepanel")
 	defer oui.end(uictx)
 
 	// --- colour picker ---------------------------------------------------
