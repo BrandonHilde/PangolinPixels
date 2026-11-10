@@ -435,27 +435,25 @@ panel_toolbar :: proc() {
 			if add_clicked {
 				popup_begin(pid, oui_rect(add_node))
 				popup_grid(5)
-				any_section := false
 				if !is_colors && !is_patterns {
+					popup_column("Tools")
 					for tool in Tool {
 						if !tool_group_has(&g, tool) {
 							popup_item_icon(TOOL_NAMES[tool], int(tool), TOOL_ICONS[tool], TOOL_HELP[tool])
 						}
 					}
-					any_section = true
 				}
 				if !is_tools && !is_patterns {
-					if any_section do popup_sep()
+					popup_column("Colors")
 					popup_item_swatch("Foreground color", 100, fg)
 					popup.items[len(popup.items) - 1].tip = "Add the foreground color to this group."
 					popup_item("All palette colors", 101, tip = "Add all the colors of the current palette to this group.")
 					for p in Palette_Preset {
 						popup_item_palette(PALETTE_PRESET_NAMES[p], 200 + int(p), palette_preset(p), "Add the colors of this palette to this group.")
 					}
-					any_section = true
 				}
 				if !is_tools && !is_colors {
-					if any_section do popup_sep()
+					popup_column("Dither patterns")
 					for pat in Pattern {
 						if !pattern_in(g.patterns[:], pat) {
 							popup_item_half(PATTERN_NAMES[pat], 300 + int(pat))
