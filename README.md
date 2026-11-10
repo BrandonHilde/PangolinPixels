@@ -10,6 +10,11 @@ the code shared with the other Pangolin tools are git submodules in `libs/odinui
 `git clone --recursive`, or let the build scripts fetch them on the first build (`git submodule update --init`). To build by
 hand: `sh libs/shared/sync.sh`, which copies the shared code into `src` as `shared_*.odin`, then
 `odin build src -out:PangolinPixels -o:speed -collection:odinui=libs/odinui`.
+On Linux, `./install.sh` builds the program and installs it for your account: in `~/.local/opt/pangolin/PangolinPixels`, with
+its own settings, workspaces and macros (apart from this folder's build), and in the application list with its icon.
+Run it again to update, or `./install.sh --uninstall` to remove it. To install a build made elsewhere (for another
+account on the computer, or without Odin), put `install.sh`, the `PangolinPixels` program and `assets/icon` in one folder and
+run `sh install.sh --no-build` there.
 Drag image/project files onto the window to open them. `PangolinPixels --selftest` runs the headless test suite
 (on Windows use `PangolinPixels-console.exe`, since the GUI build has no console).
 
