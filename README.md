@@ -41,7 +41,8 @@ Drag image/project files onto the window to open them. `PangolinPixels --selftes
   elliptical marquee, lasso, magic wand, move, spray, hand, zoom. Left/right mouse = foreground/background color.
 - **Brush options**: size 1-64, square/round, dither patterns (checker, dots, lines, Fg/Bg dither), ink modes
   (normal / replace / lock alpha), horizontal + vertical mirroring, tiled drawing (X / Y / both).
-- **Layers & animation**: unlimited layers (opacity, 9 blend modes, lock, visibility, merge, flatten), frames with
+- **Layers & animation**: unlimited layers (opacity, 9 blend modes, lock, visibility, merge, flatten), layer groups (Ctrl+G groups
+  the layer, Ctrl+Shift+G ungroups; pass-through or blended as one, Merge Group), frames with
   per-frame duration, copy-on-write cels, tags (forward / reverse / ping-pong), onion skin (previous / next frame,
   opacity), playback. Drag a layer in the timeline to reorder it; right-click it for the layer menu. The current layer's
   blend mode and opacity are also in the right panel, above its filters.
@@ -69,8 +70,8 @@ Drag image/project files onto the window to open them. `PangolinPixels --selftes
 - **Sprite ops**: canvas size (with anchor), scale, rotate, flip, trim, outline, hue/saturation/brightness (live
   preview), invert, grayscale, replace color.
 - **Files**: native `.pxl` project, PNG / JPG (built-in decoder: progressive, CMYK, EXIF rotation, any size) / WebP (lossy, lossless, first frame of an animation) / BMP / TGA / GIF / QOI import,
-  import as layer, import sprite sheet; export PNG, sprite sheet, PNG sequence, animated GIF (median-cut quantiser),
-  Multiple documents in tabs; unsaved-change prompts; unlimited undo (256 steps).
+  import as layer, import sprite sheet; export PNG, sprite sheet, PNG sequence, animated GIF (median-cut quantiser).
+  Multiple documents in tabs; unsaved-change prompts; 256 steps of undo. A sprite is at most 8192 x 8192 pixels.
 - **Canvas background**: checkerboard or any solid color (View > Canvas Background, or the swatch in the options bar); remembered between sessions.
 - **Tooltips**: every control says what it is, and with the pointer left on it, what it does.
 - **UI scale** (View > UI Scale): Auto fits the screen the window is on, or a slider sets it from 50% to 500%, with text and

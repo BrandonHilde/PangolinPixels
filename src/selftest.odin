@@ -383,6 +383,12 @@ selftest :: proc() -> int {
 	set_frame(0)
 	doc_add_frame(td, false)
 	check(td.tags[0].from == 2, "tag shifts after insert before it")
+	{
+		n := len(td.frames)
+		td.tags[0].from, td.tags[0].to = 0, 1
+		doc_reverse_frames(td)
+		check(td.tags[0].from == n - 2 && td.tags[0].to == n - 1, "a tag stays on its frames when the frames are reversed")
+	}
 	doc = d
 
 	// --- PNG + GIF ---

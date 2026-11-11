@@ -185,14 +185,3 @@ palette_load_gpl :: proc(d: ^Doc, path: string) -> bool {
 	return true
 }
 
-read_file :: proc(path: string) -> (data: []u8, ok: bool) {
-	d, err := os.read_entire_file_from_path(path, context.allocator)
-	if err != nil {
-		return nil, false
-	}
-	return d, true
-}
-
-write_file :: proc(path: string, data: []u8) -> bool {
-	return os.write_entire_file_from_bytes(path, data) == nil
-}

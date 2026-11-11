@@ -297,11 +297,11 @@ dlg_scale :: proc() {
 	c := dialog_frame("Scale Sprite", 250, 160)
 	y := c.y
 	if row_int(c, y, "Width", &dialog.a, 1, 8192, "The sprite's new width in pixels. Pixels are repeated or dropped, never blurred.") && dialog.flag {
-		dialog.b = max(int(f32(dialog.a) * dialog.ratio + 0.5), 1)
+		dialog.b = clamp(int(f32(dialog.a) * dialog.ratio + 0.5), 1, DOC_MAX_SIDE)
 	}
 	y += 20
 	if row_int(c, y, "Height", &dialog.b, 1, 8192, "The sprite's new height in pixels. Pixels are repeated or dropped, never blurred.") && dialog.flag {
-		dialog.a = max(int(f32(dialog.b) / dialog.ratio + 0.5), 1)
+		dialog.a = clamp(int(f32(dialog.b) / dialog.ratio + 0.5), 1, DOC_MAX_SIDE)
 	}
 	y += 22
 	checkbox(c.x, y, "Lock aspect ratio", &dialog.flag, {"Lock aspect ratio", "Keep the width and height in step, so the sprite is not stretched."})
@@ -310,8 +310,8 @@ dlg_scale :: proc() {
 	for p, i in pcts {
 		label := fmt.tprintf("%d%%", p)
 		if button(Rect{c.x + i32(i) * 44, y, 42, 14}, label, {label, "Fill in this percentage of the sprite's current size."}) {
-			dialog.a = max(doc.w * p / 100, 1)
-			dialog.b = max(doc.h * p / 100, 1)
+			dialog.a = clamp(doc.w * p / 100, 1, DOC_MAX_SIDE)
+			dialog.b = clamp(doc.h * p / 100, 1, DOC_MAX_SIDE)
 		}
 	}
 	ok, cancel := dialog_buttons(c, "Scale the sprite to this size (Enter). You can undo it.")

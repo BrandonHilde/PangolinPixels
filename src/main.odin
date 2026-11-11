@@ -244,6 +244,8 @@ main :: proc() {
 		ui.input_layer = (dialog.kind != .None ? 2 : 0) + (popup.open ? 1 : 0)
 
 		for p in gfx.dropped {
+			// a dialog is working on the sprite in front (an adjustment's preview, a question about it): it stays there
+			if dialog.kind != .None do break
 			open_path(p)
 		}
 

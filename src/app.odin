@@ -136,6 +136,7 @@ doc_title :: proc(d: ^Doc) -> string {
 }
 
 add_doc :: proc(d: ^Doc) {
+	curve_commit() // a curve still being shaped belongs to the sprite that was in front
 	append(&docs, d)
 	doc = d
 	stop_playback()

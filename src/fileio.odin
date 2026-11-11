@@ -31,7 +31,9 @@ native_dialog :: proc(save: bool, title: string, filters: []Filter, def_ext, ini
 	when ODIN_OS == .Windows {
 		return native_dialog_windows(save, title, filters, def_ext, initial)
 	} else {
-		return native_dialog_zenity(save, title, filters, def_ext, initial)
+		p, pok := native_dialog_zenity(save, title, filters, def_ext, initial)
+		if pok && save do p = path_default_ext(p, def_ext)
+		return p, pok
 	}
 }
 
@@ -127,6 +129,7 @@ when ODIN_OS != .Windows {
 				return clone_trim(out), true
 			}
 		}
+		set_status("No file picker could be started: install zenity or kdialog")
 		return "", false
 	}
 
@@ -328,7 +331,7 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 	}
 	w := int(r32(&r))
 	h := int(r32(&r))
-	if w < 1 || h < 1 || w > 8192 || h > 8192 {
+	if w < 1 || h < 1 || w > DOC_MAX_SIDE || h > DOC_MAX_SIDE {
 		return nil, false
 	}
 	nd := doc_new(w, h)
@@ -341,7 +344,7 @@ project_decode :: proc(data: []u8) -> (d: ^Doc, ok: bool) {
 	clear(&nd.palette)
 
 	nf := int(r32(&r))
-	if nf < 1 || nf > 100000 {
+	if nf < 1 || nf > DOC_MAX_FRAMES {
 		doc_destroy(nd)
 		return nil, false
 	}
@@ -437,12 +440,17 @@ save_png :: proc(path: string, pix: []Color, w, h: int) -> bool {
 	return data != nil && write_file(path, data)
 }
 
+// The largest sprite a project file holds: a larger one could be saved but not opened again.
+DOC_MAX_SIDE :: 8192
+DOC_MAX_FRAMES :: 100000
+
 doc_from_image :: proc(path: string) -> (d: ^Doc, ok: bool) {
 	pix, w, h, lok := load_image_pixels(path)
 	if !lok {
 		return nil, false
 	}
 	defer delete(pix)
+	if w > DOC_MAX_SIDE || h > DOC_MAX_SIDE do return nil, false
 	nd := doc_new(w, h, path_stem(path))
 	copy(nd.layers[0].cels[0].pix, pix)
 	palette_from_sprite(nd)
@@ -511,7 +519,7 @@ open_path :: proc(path: string) {
 	case:
 		d, ok := doc_from_image(path)
 		if !ok {
-			show_message("Open", fmt.tprintf("Cannot open %s", path_basename(path)))
+			show_message("Open", fmt.tprintf("Cannot open %s: it can't be read, or is larger than %d x %d.", path_basename(path), DOC_MAX_SIDE, DOC_MAX_SIDE))
 			return
 		}
 		add_doc(d)
@@ -598,8 +606,7 @@ import_as_layer :: proc(path: string, center: Maybe(IVec) = nil) {
 			l.cels[doc.active_frame].pix[(y + oy) * doc.w + x + ox] = pix[y * w + x]
 		}
 	}
-	inject_at(&doc.layers, doc.active_layer + 1, l)
-	doc.active_layer += 1
+	layer_insert_above(doc, l, doc.active_layer) // in the active layer's group, with an id of its own
 	doc_touch(doc)
 	cropped := ox < 0 || oy < 0 || ox + w > doc.w || oy + h > doc.h
 	set_status(cropped ? "Imported as layer (cropped to the canvas)" : "Imported as layer")
@@ -617,6 +624,10 @@ import_sheet :: proc(fw, fh: int) {
 	fh := clamp(fh, 1, h)
 	cols, rows := w / fw, h / fh
 	if cols < 1 || rows < 1 {
+		return
+	}
+	if cols * rows > DOC_MAX_FRAMES {
+		show_message("Import", fmt.tprintf("That would be %d frames. A sprite holds %d at most: use a larger frame size.", cols * rows, DOC_MAX_FRAMES))
 		return
 	}
 	nd := doc_new(fw, fh, path_stem(sheet_path))
@@ -802,7 +813,11 @@ export_run :: proc(format: Export_Format, scale: int, _unused: bool) {
 				count += 1
 			}
 		}
-		set_statusf("Exported %d PNG files", count)
+		if total := hi - lo + 1; count == total {
+			set_statusf("Exported %d PNG files", count)
+		} else {
+			show_message("Export failed", fmt.tprintf("Only %d of the %d PNG files could be written.", count, total))
+		}
 	}
 }
 

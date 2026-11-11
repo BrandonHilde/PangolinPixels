@@ -550,6 +550,9 @@ doc_reverse_frames :: proc(d: ^Doc) {
 		slice.reverse(l.cels[:])
 	}
 	d.active_frame = len(d.frames) - 1 - d.active_frame
+	// tags stay on the frames they were on
+	n := len(d.frames)
+	for &t in d.tags do t.from, t.to = n - 1 - t.to, n - 1 - t.from
 	doc_touch(d)
 }
 
