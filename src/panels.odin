@@ -578,6 +578,14 @@ panel_options :: proc() {
 			opts.ink = Ink(nv)
 		}
 	}
+	// one preset list for all the drawing tools, as they share the brush settings
+	brush_presets :: proc() {
+		cv := brush_to_ints(brush_get())
+		tip := Tip{"Brush preset", "A ready-made brush, or one you saved: its size, shape, ink, pattern, spray density and fill. The drawing tools share it. Picking one replaces those settings. The ... menu saves your own."}
+		if v, ok := preset_bar(BRUSH_PRESET_KIND, brush_builtins(), &brush_preset, cv[:], w = 124, tip = tip); ok {
+			brush_put(brush_from_ints(brush_get(), v.vals))
+		}
+	}
 	sel_modes :: proc() {
 		labels := [?]string{"New", "Add", "Sub", "And"}
 		tips := [?]Tip {
@@ -600,26 +608,32 @@ panel_options :: proc() {
 	} else do switch t {
 	case .Grid, .Symmetry, .Tiling, .Onion:
 	case .Pencil:
+		brush_presets()
 		size_slider()
 		ocheck("Pixel-perfect", &opts.pixel_perf, {"", "Remove the extra pixel at L-shaped corners while drawing, so a one pixel line stays clean."})
 		ink_pattern()
 	case .Eraser:
+		brush_presets()
 		size_slider()
 		ink_pattern()
 	case .Line:
+		brush_presets()
 		size_slider()
 		ink_pattern()
 		ohint("Shift: snap angle")
 	case .Rect, .Ellipse:
+		brush_presets()
 		size_slider()
 		ocheck("Filled", &opts.fill_shape, {"", "Fill the shape with the color. Off draws only its outline, as wide as the brush."})
 		ink_pattern()
 		ohint("Shift: square   Ctrl: from center")
 	case .Curve:
+		brush_presets()
 		size_slider()
 		ink_pattern()
 		ohint("Drag a line, then drag the handles. Enter: apply   Esc: cancel")
 	case .Spray:
+		brush_presets()
 		size_slider()
 		oslider("Density", 90, &opts.spray_dens, 1, 100, {"Spray density", "How many dots each moment of spraying scatters. The brush size sets how far they spread."})
 		ink_pattern()

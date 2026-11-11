@@ -827,6 +827,57 @@ selftest_tool_groups :: proc() {
 	check(!workspace_apply_text("hello=1\n") && len(tool_groups) == 4, "text without groups is not a workspace")
 	workspace_builtin(0)
 
+	// brush presets: the built-in ones, the user's in the preferences file, and the name kept with a group's
+	// own settings and with workspaces
+	{
+		check(brush_preset_apply("1px Pixel-Perfect") && opts.pixel_perf && opts.brush_size == 1 && name_str(&brush_preset) == "1px Pixel-Perfect", "a built-in brush preset loads")
+		NAME :: "Mine, 6px: dots; 50%"
+		want := [7]int{6, 1, 0, int(Ink.Replace), int(Pattern.Dots), 55, 1}
+		preset_store(BRUSH_PRESET_KIND, NAME, want[:])
+		sb := strings.builder_make(context.temp_allocator)
+		files_prefs_write(&sb)
+		line := ""
+		for l in strings.split_lines(strings.to_string(sb), context.temp_allocator) {
+			if strings.has_prefix(l, "preset=brush|Mine") do line = l
+		}
+		preset_remove(preset_find(BRUSH_PRESET_KIND, NAME))
+		eq := strings.index_byte(line, '=')
+		check(eq > 0 && preset_find(BRUSH_PRESET_KIND, NAME) < 0 && preset_prefs_read(line[:eq], line[eq + 1:]), "a brush preset of the user's is written with the preferences")
+		v, ok := preset_value(BRUSH_PRESET_KIND, NAME, brush_builtins())
+		check(ok && slice.equal(v.vals, want[:]) && v.text == "", "and reads back with the same values")
+		check(brush_preset_apply(NAME) && opts.brush_size == 6 && opts.brush_round && !opts.pixel_perf && opts.ink == .Replace && opts.pattern == .Dots && opts.spray_dens == 55 && opts.fill_shape, "it loads into the brush settings")
+		preset_prefs_read("preset", "brush|Old|2,0")
+		check(brush_preset_apply("Old") && opts.brush_size == 2 && !opts.brush_round && opts.pattern == .Dots && opts.fill_shape, "a preset saved with fewer values leaves the other settings alone")
+
+		tool_groups_default()
+		brush_preset_apply("1px Pencil")
+		select_tool_in_group(.Pencil, 0)
+		group_set_own(0, true)
+		brush_preset_apply(NAME)
+		select_tool_in_group(.Line, 1)
+		check(name_str(&brush_preset) == "1px Pencil", "the shared settings keep their own preset name")
+		tool_groups_parse(tool_groups_serialize())
+		check(tool_groups[0].own && name_str(&tool_groups[0].brush.preset) == NAME && tool_groups[0].brush.size == 6, "a group's own preset name survives the groups line")
+		select_tool_in_group(.Pencil, 0)
+		check(name_str(&brush_preset) == NAME, "and comes back with the group")
+		tool_groups_parse("49:0,1:::Old:1,0,1,0,0,0,30")
+		check(name_str(&tool_groups[0].brush.preset) == "1px Pixel-Perfect", "own settings saved before preset names get the matching built-in's")
+		tool_groups_parse("49:0,1:::Old:4,0,0,0,7,0,30")
+		check(tool_groups[0].brush.preset.n == 0, "and none when no built-in matches")
+
+		workspace_builtin(3)
+		check(name_str(&brush_preset) == "1px Pixel-Perfect" && name_str(&shared_brush.preset) == "1px Pencil", "the built-in workspaces name their brushes' presets")
+		select_tool_in_group(.Move, 3)
+		brush_preset_apply(NAME)
+		text = strings.clone(workspace_text(), context.temp_allocator)
+		workspace_builtin(0)
+		check(workspace_apply_text(text) && name_str(&tool_groups[0].brush.preset) == "1px Pixel-Perfect" && name_str(&shared_brush.preset) == NAME, "workspaces keep the preset names")
+
+		preset_remove(preset_find(BRUSH_PRESET_KIND, NAME))
+		preset_remove(preset_find(BRUSH_PRESET_KIND, "Old"))
+		workspace_builtin(0)
+	}
+
 	// snap to grid
 	opts.grid, opts.snap, opts.grid_w, opts.grid_h, opts.grid_ox, opts.grid_oy = true, true, 8, 8, 0, 0
 	a, b := snap_cells({3, 3}, {10, 10})

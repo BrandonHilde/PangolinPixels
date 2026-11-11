@@ -165,6 +165,7 @@ main :: proc() {
 	if shot_path == "" {
 		prefs_load()
 	}
+	brush_preset_guess(&brush_preset, brush_get())
 	if files_arg != "" {
 		files_set_dir(files_arg)
 		bottom_mode = .Files

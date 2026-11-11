@@ -38,6 +38,7 @@ prefs_save :: proc() {
 	fmt.sbprintf(&sb, "grid_h=%d\n", opts.grid_h)
 	// the shared brush settings, not those of a group that keeps its own
 	groups := tool_groups_serialize()
+	fmt.sbprintf(&sb, "brush_preset=%s\n", name_str(&shared_brush.preset))
 	fmt.sbprintf(&sb, "brush_size=%d\n", shared_brush.size)
 	fmt.sbprintf(&sb, "pixel_perfect=%d\n", b2i(shared_brush.pixel_perf))
 	fmt.sbprintf(&sb, "onion_prev=%d\n", opts.onion_prev)
@@ -71,6 +72,11 @@ prefs_load :: proc() {
 			continue
 		}
 		if files_prefs_read(key, sval) {
+			continue
+		}
+		if key == "brush_preset" {
+			// only the size and pixel-perfect are saved besides (after this line), so the preset brings back the rest
+			brush_preset_apply(sval)
 			continue
 		}
 		val, vok := strconv.parse_int(sval)

@@ -1,6 +1,7 @@
 package pangolin
 
 import "core:fmt"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 
@@ -23,6 +24,7 @@ Brush_Opts :: struct {
 	pattern:    Pattern,
 	ink:        Ink,
 	spray_dens: int,
+	preset:     Name, // the brush preset these settings were picked from, or empty
 }
 
 Tool_Group :: struct {
@@ -45,7 +47,7 @@ group_key_wait := -1 // group waiting for a hotkey press, or -1
 shared_brush: Brush_Opts // settings of the groups without their own, kept here while an own-settings group is active
 
 brush_get :: proc() -> Brush_Opts {
-	return {opts.brush_size, opts.brush_round, opts.pixel_perf, opts.fill_shape, opts.pattern, opts.ink, opts.spray_dens}
+	return {opts.brush_size, opts.brush_round, opts.pixel_perf, opts.fill_shape, opts.pattern, opts.ink, opts.spray_dens, brush_preset}
 }
 
 brush_put :: proc(b: Brush_Opts) {
@@ -53,6 +55,118 @@ brush_put :: proc(b: Brush_Opts) {
 	opts.brush_round, opts.pixel_perf, opts.fill_shape = b.round, b.pixel_perf, b.fill
 	opts.pattern, opts.ink = b.pattern, b.ink
 	opts.spray_dens = clamp(b.spray_dens, 1, 100)
+	brush_preset = b.preset
+}
+
+// ---------------------------------------------------------------------------
+// Brush presets (shared presets.odin). The drawing tools share one brush, so they share one kind of preset;
+// the preset's name goes with the brush settings, so a group with its own settings keeps its own.
+// ---------------------------------------------------------------------------
+
+BRUSH_PRESET_KIND :: "brush"
+
+brush_preset: Name // the preset (built-in or the user's) the live brush settings were picked from, by name
+
+@(private = "file")
+Brush_Builtin :: struct {
+	name: string,
+	b:    Brush_Opts,
+}
+
+// The first one matches the settings the app starts with.
+@(private = "file")
+BRUSH_BUILTINS := [?]Brush_Builtin {
+	{"1px Pencil", {size = 1, spray_dens = 30}},
+	{"1px Pixel-Perfect", {size = 1, pixel_perf = true, spray_dens = 30}},
+	{"3px Round", {size = 3, round = true, spray_dens = 30}},
+	{"5px Round", {size = 5, round = true, spray_dens = 30}},
+	{"4px Square", {size = 4, spray_dens = 30}},
+	{"4px Checker Dither", {size = 4, pattern = .Checker, spray_dens = 30}},
+	{"4px Two-Color Dither", {size = 4, pattern = .Dither_FgBg, spray_dens = 30}},
+	{"3px Shade Inside", {size = 3, round = true, ink = .Lock_Alpha, spray_dens = 30}},
+	{"Dither Spray", {size = 8, round = true, pattern = .Checker, spray_dens = 40}},
+	{"Filled Shapes", {size = 1, fill = true, spray_dens = 30}},
+}
+
+// A preset's values: size, round, pixel-perfect, ink, pattern, density, filled. New settings go at the end,
+// so presets saved before them still load.
+brush_to_ints :: proc(b: Brush_Opts) -> [7]int {
+	return {b.size, int(b.round), int(b.pixel_perf), int(b.ink), int(b.pattern), b.spray_dens, int(b.fill)}
+}
+
+// `b` with a preset's values; a preset saved with fewer values leaves the others as they are.
+brush_from_ints :: proc(b: Brush_Opts, v: []int) -> Brush_Opts {
+	b := b
+	if len(v) > 0 do b.size = clamp(v[0], 1, 64)
+	if len(v) > 1 do b.round = v[1] != 0
+	if len(v) > 2 do b.pixel_perf = v[2] != 0
+	if len(v) > 3 do b.ink = Ink(clamp(v[3], 0, len(Ink) - 1))
+	if len(v) > 4 do b.pattern = Pattern(clamp(v[4], 0, len(Pattern) - 1))
+	if len(v) > 5 do b.spray_dens = clamp(v[5], 1, 100)
+	if len(v) > 6 do b.fill = v[6] != 0
+	return b
+}
+
+brush_builtins :: proc() -> []Preset_Builtin {
+	out := make([]Preset_Builtin, len(BRUSH_BUILTINS), context.temp_allocator)
+	for p, i in BRUSH_BUILTINS {
+		v := brush_to_ints(p.b)
+		out[i] = {name = p.name, vals = slice.clone(v[:], context.temp_allocator)}
+	}
+	return out
+}
+
+// Loads the preset called `name` (built-in or the user's) into the live brush settings; false if there is none.
+brush_preset_apply :: proc(name: string) -> bool {
+	v, ok := preset_value(BRUSH_PRESET_KIND, name, brush_builtins())
+	if !ok do return false
+	brush_put(brush_from_ints(brush_get(), v.vals))
+	name_set(&brush_preset, name)
+	return true
+}
+
+// Settings saved without a preset name (older files, the built-in workspaces) take the name of the first
+// built-in preset with exactly their values, if there is one.
+brush_preset_guess :: proc(name: ^Name, b: Brush_Opts) {
+	if name.n > 0 do return
+	v := brush_to_ints(b)
+	for p in BRUSH_BUILTINS {
+		if brush_to_ints(p.b) == v {
+			name_set(name, p.name)
+			return
+		}
+	}
+}
+
+// A preset name inside the groups line: the characters that separate its fields become %XX.
+@(private = "file")
+preset_name_escape :: proc(s: string) -> string {
+	sb := strings.builder_make(context.temp_allocator)
+	for i in 0 ..< len(s) {
+		switch s[i] {
+		case '%', ',', ':', ';':
+			fmt.sbprintf(&sb, "%%%02X", s[i])
+		case:
+			strings.write_byte(&sb, s[i])
+		}
+	}
+	return strings.to_string(sb)
+}
+
+@(private = "file")
+preset_name_unescape :: proc(s: string) -> string {
+	sb := strings.builder_make(context.temp_allocator)
+	for i := 0; i < len(s); i += 1 {
+		if s[i] == '%' && i + 2 < len(s) {
+			if v, ok := strconv.parse_int(s[i + 1:i + 3], 16); ok {
+				strings.write_byte(&sb, u8(v))
+				i += 2
+				continue
+			}
+		}
+		strings.write_byte(&sb, s[i])
+	}
+	return strings.to_string(sb)
 }
 
 group_owns :: proc(gi: int) -> bool {
@@ -345,7 +459,8 @@ pattern_in :: proc(list: []Pattern, p: Pattern) -> bool {
 
 // Preferences and workspaces: groups separated by ;, each "<key>:<tools>:<colours>:<patterns>:<name>:<brush>:<pen>"
 // with tools and patterns as enum indices, colours as hex, <brush> the group's own settings
-// (size,round,pixel-perfect,fill,pattern,ink,density) or empty, and <pen> 1 for the pen eraser's group.
+// (size,round,pixel-perfect,fill,pattern,ink,density[,preset name, escaped]) or empty, and <pen> 1 for the pen
+// eraser's group.
 // <pen> is only written when set, so other groups read the same as in older files.
 tool_groups_serialize :: proc() -> string {
 	brush_sync()
@@ -367,6 +482,7 @@ tool_groups_serialize :: proc() -> string {
 		if g.own {
 			b := g.brush
 			fmt.sbprintf(&sb, "%d,%d,%d,%d,%d,%d,%d", b.size, int(b.round), int(b.pixel_perf), int(b.fill), int(b.pattern), int(b.ink), b.spray_dens)
+			if b.preset.n > 0 do fmt.sbprintf(&sb, ",%s", preset_name_escape(name_str(&b.preset)))
 		}
 		if g.pen_eraser do fmt.sbprintf(&sb, ":1")
 	}
@@ -409,8 +525,13 @@ tool_groups_parse :: proc(s: string) {
 		if len(fields) > 4 do name_set(&g.name, group_clean_name(fields[4]))
 		if len(fields) > 5 && fields[5] != "" {
 			v := [7]int{1, 0, 0, 0, 0, 0, 30}
+			pname := ""
 			for ns, j in strings.split(fields[5], ",", context.temp_allocator) {
-				if j < len(v) do v[j], _ = strconv.parse_int(ns)
+				if j < len(v) {
+					v[j], _ = strconv.parse_int(ns)
+				} else if j == len(v) {
+					pname = preset_name_unescape(ns)
+				}
 			}
 			g.own = true
 			g.brush = {
@@ -422,6 +543,8 @@ tool_groups_parse :: proc(s: string) {
 				ink        = Ink(clamp(v[5], 0, len(Ink) - 1)),
 				spray_dens = clamp(v[6], 1, 100),
 			}
+			name_set(&g.brush.preset, pname)
+			brush_preset_guess(&g.brush.preset, g.brush)
 		}
 		if len(fields) > 6 && fields[6] == "1" {
 			// at most one: the first in the file keeps it

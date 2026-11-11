@@ -37,6 +37,7 @@ workspace_text :: proc() -> string {
 	sb := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&sb, "pxws=1\n")
 	fmt.sbprintf(&sb, "brush=%d,%d,%d,%d,%d,%d,%d\n", b.size, int(b.round), int(b.pixel_perf), int(b.fill), int(b.pattern), int(b.ink), b.spray_dens)
+	fmt.sbprintf(&sb, "brush_preset=%s\n", name_str(&b.preset))
 	fmt.sbprintf(&sb, "groups=%s\n", groups)
 	return strings.to_string(sb)
 }
@@ -61,9 +62,13 @@ workspace_apply_text :: proc(text: string) -> bool {
 			for ns, j in strings.split(val, ",", context.temp_allocator) {
 				if j < len(v) do v[j], _ = strconv.parse_int(ns)
 			}
-			brush_put({clamp(v[0], 1, 64), v[1] != 0, v[2] != 0, v[3] != 0, Pattern(clamp(v[4], 0, len(Pattern) - 1)), Ink(clamp(v[5], 0, len(Ink) - 1)), clamp(v[6], 1, 100)})
+			brush_put({size = clamp(v[0], 1, 64), round = v[1] != 0, pixel_perf = v[2] != 0, fill = v[3] != 0, pattern = Pattern(clamp(v[4], 0, len(Pattern) - 1)), ink = Ink(clamp(v[5], 0, len(Ink) - 1)), spray_dens = clamp(v[6], 1, 100)})
+		case "brush_preset":
+			// after the brush line, which clears it
+			name_set(&brush_preset, val)
 		}
 	}
+	brush_preset_guess(&brush_preset, brush_get())
 	group_key_wait = -1
 	workspace_pick_first_tool()
 	return true
@@ -139,6 +144,10 @@ workspace_builtin :: proc(i: int) {
 		fill.own, fill.brush = true, {size = 3, round = true, fill = true, spray_dens = 40}
 		ws_patterns("Dither", .THREE, .Checker, .Checker_Inv, .Dither_FgBg, .Dots)
 		ws_group("View", .FOUR, .Move, .Hand, .Zoom)
+	}
+	brush_preset_guess(&brush_preset, brush_get())
+	for &g in tool_groups {
+		if g.own do brush_preset_guess(&g.brush.preset, g.brush)
 	}
 	group_key_wait = -1
 	workspace_pick_first_tool()
