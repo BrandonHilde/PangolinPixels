@@ -253,6 +253,16 @@ render_cursor :: proc(d: ^Doc) {
 		return
 	}
 	brush := t == .Pencil || t == .Eraser || t == .Spray || t == .Line || t == .Rect || t == .Ellipse || t == .Curve
+	// the indicator drawn below is the cursor: no system cursor on top of it, unless it is too small on screen to find
+	cells := brush ? max(opts.brush_size, t == .Spray ? 2 : 1) : 1
+	if f32(cells) * z >= 6 {
+		if brush {
+			ui.hide_cursor = true
+		} else if ui.cursor == .TOOL {
+			// the outlined pixel marks the spot; the icon beside it still says which tool is in hand
+			ui_tool_cursor(TOOL_ICONS[t], .Tag)
+		}
+	}
 	if brush && opts.brush_size > 1 && t != .Spray {
 		n := opts.brush_size
 		lo := -((n - 1) / 2)

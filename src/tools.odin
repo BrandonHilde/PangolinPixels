@@ -403,6 +403,8 @@ end_drag :: proc() {
 	drag.active = false
 }
 
+ZOOM_CURSOR_HOT :: [2]f32{10.5, 10.5} // the middle of the zoom icon's lens
+
 // Called every frame with the viewport rectangle. Handles pan, zoom and tool input.
 canvas_update :: proc(vp: Rect) {
 	canvas_vp = vp
@@ -437,7 +439,7 @@ canvas_update :: proc(vp: Rect) {
 	if drag.pan_active {
 		doc.ox += f32(ui.mx - ui.pmx)
 		doc.oy += f32(ui.my - ui.pmy)
-		ui.cursor = .RESIZE_ALL
+		ui_tool_cursor(.Hand, .Icon)
 		if !ui.down[2] && !(t == .Hand && ui.down[0]) {
 			drag.pan_active = false
 		}
@@ -448,17 +450,24 @@ canvas_update :: proc(vp: Rect) {
 		switch t {
 		case .Grid, .Symmetry, .Tiling, .Onion: // switches are never the active tool
 		case .Hand:
-			ui.cursor = .RESIZE_ALL
+			ui_tool_cursor(.Hand, .Icon)
 		case .Zoom:
-			ui.cursor = .POINTING_HAND
-		case .Picker, .Pencil, .Eraser, .Line, .Rect, .Ellipse, .Curve, .Bucket, .Select_Rect, .Select_Ellipse, .Lasso, .Wand, .Move, .Spray:
-			ui.cursor = .CROSSHAIR
+			ui_tool_cursor(.Zoom, .Icon, ZOOM_CURSOR_HOT)
+		case .Move:
+			ui.cursor = .RESIZE_ALL
+		case .Picker, .Pencil, .Eraser, .Line, .Rect, .Ellipse, .Curve, .Bucket, .Select_Rect, .Select_Ellipse, .Lasso, .Wand, .Spray:
+			// shown only where the canvas doesn't draw its own indicator (see render_cursor)
+			ui_tool_cursor(TOOL_ICONS[t])
 		}
 		if ui.pressed[0] || ui.pressed[1] {
 			begin_drag(ui.pressed[0] ? 0 : 1, p)
 		}
 	} else if drag.active {
-		ui.cursor = .CROSSHAIR
+		if t == .Move {
+			ui.cursor = .RESIZE_ALL
+		} else {
+			ui_tool_cursor(TOOL_ICONS[t])
+		}
 		btn_down := ui.down[drag.btn]
 		update_drag(p)
 		if !btn_down || ui.released[drag.btn] {
