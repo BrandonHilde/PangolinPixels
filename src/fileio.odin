@@ -30,6 +30,8 @@ FILTERS_GPL := [?]Filter{{"GIMP palette (*.gpl)", "*.gpl"}, {"All files", "*.*"}
 native_dialog :: proc(save: bool, title: string, filters: []Filter, def_ext, initial: string) -> (path: string, ok: bool) {
 	when ODIN_OS == .Windows {
 		return native_dialog_windows(save, title, filters, def_ext, initial)
+	} else when ODIN_OS == .Darwin {
+		return native_dialog_mac(save, title, filters, def_ext, initial, "")
 	} else {
 		p, pok := native_dialog_zenity(save, title, filters, def_ext, initial)
 		if pok && save do p = path_default_ext(p, def_ext)

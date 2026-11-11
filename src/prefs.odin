@@ -5,10 +5,11 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 
-// Tiny key=value preferences file stored next to the executable.
+// Tiny key=value preferences file, in the user's data folder (gfx_data_dir: next to the program
+// when that can be written).
 
 prefs_path :: proc() -> string {
-	return fmt.tprintf("%spixels.cfg", gfx_app_dir())
+	return fmt.tprintf("%spixels.cfg", gfx_data_dir())
 }
 
 // The settings file to read in `dir`: the app has had other names, and an older file is read once
@@ -50,7 +51,7 @@ prefs_save :: proc() {
 }
 
 prefs_load :: proc() {
-	path := prefs_find(gfx_app_dir())
+	path := prefs_find(gfx_data_dir())
 	if path == "" {
 		return
 	}

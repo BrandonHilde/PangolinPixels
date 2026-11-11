@@ -51,6 +51,12 @@ demo_setup :: proc() {
 }
 
 main :: proc() {
+	for a in os.args[1:] {
+		if a == "--version" {
+			version_print()
+			return
+		}
+	}
 	shot_path := ""
 	convert_path := ""
 	win_w, win_h := 0, 0

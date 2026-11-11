@@ -588,7 +588,7 @@ shortcut_text_for :: proc(s: Shortcut) -> string {
 }
 
 dlg_about :: proc() {
-	c := dialog_frame("About", 340, 150)
+	c := dialog_frame("About", 340, 164)
 	logo_draw(c.x + 4, c.y + 6, 4)
 	tx := c.x + 80
 	text(tx, c.y + 6, APP_NAME, C_ACCENT)
@@ -596,6 +596,7 @@ dlg_about :: proc() {
 	text(tx, c.y + 38, "Layers, frames, tags, onion skin, selections,", C_TEXT)
 	text(tx, c.y + 50, "mirroring, tiling, palettes, GIF/PNG export.", C_TEXT)
 	text(tx, c.y + 68, "Written in Odin with SDL3 and OdinUI.", C_TEXT_DIM)
+	text(tx, c.y + 84, fmt.tprintf("Version %s", app_version_short()), C_TEXT_DIM)
 	ok, _ := dialog_buttons(c, "Close this window (Enter or Esc).", "Close", "")
 	if ok {
 		dialog_close()
